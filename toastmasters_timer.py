@@ -54,6 +54,11 @@ COLOR_GREEN  = (0,   170, 0)
 COLOR_YELLOW = (204, 170, 0)
 COLOR_RED    = (204, 0,   0)
 
+APP_TITLE = "Caio's Toastmasters Timer Cam"
+BORDER_THICKNESS = 8
+BORDER_COLOR = (255, 255, 255)
+INNER_PADDING = 28  # gap between border and inner content
+
 
 class SharedState:
     """Thread-safe state shared between the Tk UI thread and camera thread."""
@@ -125,7 +130,7 @@ def background_for_level(level):
     return COLOR_BLACK
 
 
-def render_frame(state, big_font, small_font):
+def render_frame(state, big_font, small_font, title_font):
     with state.lock:
         elapsed = state.elapsed_locked()
         thresholds = state.thresholds
@@ -143,6 +148,19 @@ def render_frame(state, big_font, small_font):
 
     img = Image.new("RGB", (WIDTH, HEIGHT), bg)
     draw = ImageDraw.Draw(img)
+
+    title_bbox = draw.textbbox((0, 0), APP_TITLE, font=title_font, stroke_width=3)
+    title_w = title_bbox[2] - title_bbox[0]
+    title_x = (WIDTH - title_w) // 2 - title_bbox[0]
+    title_y = BORDER_THICKNESS + INNER_PADDING - title_bbox[1]
+    draw.text(
+        (title_x, title_y),
+        APP_TITLE,
+        font=title_font,
+        fill=(255, 255, 255),
+        stroke_width=3,
+        stroke_fill=(0, 0, 0),
+    )
 
     minutes, seconds = divmod(int(elapsed), 60)
     timer_text = f"{minutes:02d}:{seconds:02d}"
@@ -163,8 +181,12 @@ def render_frame(state, big_font, small_font):
     )
 
     if label:
+        label_bbox = draw.textbbox((0, 0), label, font=small_font, stroke_width=2)
+        label_h = label_bbox[3] - label_bbox[1]
+        lx = BORDER_THICKNESS + INNER_PADDING - label_bbox[0]
+        ly = HEIGHT - BORDER_THICKNESS - INNER_PADDING - label_h - label_bbox[1]
         draw.text(
-            (40, HEIGHT - 80),
+            (lx, ly),
             label,
             font=small_font,
             fill=(255, 255, 255),
@@ -172,12 +194,19 @@ def render_frame(state, big_font, small_font):
             stroke_fill=(0, 0, 0),
         )
 
+    draw.rectangle(
+        [0, 0, WIDTH - 1, HEIGHT - 1],
+        outline=BORDER_COLOR,
+        width=BORDER_THICKNESS,
+    )
+
     return img
 
 
 def camera_loop(state):
     big_font = load_font(300)
     small_font = load_font(40)
+    title_font = load_font(60)
     try:
         with pyvirtualcam.Camera(width=WIDTH, height=HEIGHT, fps=FPS) as cam:
             with state.lock:
@@ -187,7 +216,7 @@ def camera_loop(state):
                 with state.lock:
                     if not state.broadcast:
                         break
-                img = render_frame(state, big_font, small_font)
+                img = render_frame(state, big_font, small_font, title_font)
                 cam.send(np.asarray(img))
                 state.latest_frame = img
                 cam.sleep_until_next_frame()
@@ -203,7 +232,7 @@ class App:
         self.root = root
         self.state = state
         self._preview_imgtk = None
-        root.title("Toastmasters Timer Cam")
+        root.title(APP_TITLE)
         root.protocol("WM_DELETE_WINDOW", self.on_stop_broadcast)
 
         self.speech_var = tk.StringVar(value="")
