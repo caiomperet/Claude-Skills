@@ -35,7 +35,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageTk
 import pyvirtualcam
 
 
@@ -130,7 +130,78 @@ def background_for_level(level):
     return COLOR_BLACK
 
 
-def render_frame(state, big_font, small_font, title_font):
+def _build_radial_delta():
+    cy, cx = HEIGHT // 2, WIDTH // 2
+    y_idx, x_idx = np.indices((HEIGHT, WIDTH), dtype=np.float32)
+    r = np.sqrt((x_idx - cx) ** 2 + (y_idx - cy) ** 2) / np.sqrt(cx * cx + cy * cy)
+    delta = (1.0 - r) * 28.0 + r * (-22.0)
+    return delta[:, :, None].astype(np.int16)
+
+
+def _build_stripes_layer():
+    layer = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    sdraw = ImageDraw.Draw(layer)
+    spacing = 110
+    for d in range(-HEIGHT, WIDTH + HEIGHT, spacing):
+        sdraw.line([(d, 0), (d + HEIGHT, HEIGHT)], fill=(255, 255, 255, 16), width=2)
+    return layer
+
+
+def _build_base_background(base_color, radial_delta, stripes, title_font):
+    arr = np.full((HEIGHT, WIDTH, 3), base_color, dtype=np.int16)
+    arr += radial_delta
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    img = Image.fromarray(arr, "RGB").convert("RGBA")
+    img = Image.alpha_composite(img, stripes)
+
+    title_bbox = ImageDraw.Draw(img).textbbox((0, 0), APP_TITLE, font=title_font, stroke_width=2)
+    title_w = title_bbox[2] - title_bbox[0]
+    title_x = (WIDTH - title_w) // 2 - title_bbox[0]
+    title_y = BORDER_THICKNESS + INNER_PADDING - title_bbox[1]
+
+    shadow = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).text(
+        (title_x + 4, title_y + 5), APP_TITLE, font=title_font, fill=(0, 0, 0, 180)
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=6))
+    img = Image.alpha_composite(img, shadow)
+
+    draw = ImageDraw.Draw(img)
+    draw.text(
+        (title_x, title_y),
+        APP_TITLE,
+        font=title_font,
+        fill=(255, 255, 255),
+        stroke_width=2,
+        stroke_fill=(0, 0, 0),
+    )
+    draw.rounded_rectangle(
+        [
+            BORDER_THICKNESS // 2,
+            BORDER_THICKNESS // 2,
+            WIDTH - 1 - BORDER_THICKNESS // 2,
+            HEIGHT - 1 - BORDER_THICKNESS // 2,
+        ],
+        radius=24,
+        outline=BORDER_COLOR,
+        width=BORDER_THICKNESS,
+    )
+
+    return img.convert("RGB")
+
+
+def build_base_backgrounds(title_font):
+    radial = _build_radial_delta()
+    stripes = _build_stripes_layer()
+    return {
+        "black":  _build_base_background(COLOR_BLACK,  radial, stripes, title_font),
+        "green":  _build_base_background(COLOR_GREEN,  radial, stripes, title_font),
+        "yellow": _build_base_background(COLOR_YELLOW, radial, stripes, title_font),
+        "red":    _build_base_background(COLOR_RED,    radial, stripes, title_font),
+    }
+
+
+def render_frame(state, big_font, small_font, bases):
     with state.lock:
         elapsed = state.elapsed_locked()
         thresholds = state.thresholds
@@ -141,49 +212,42 @@ def render_frame(state, big_font, small_font, title_font):
         level = state.max_color
 
     if level == 4:
-        # 1-second alternating red / black
-        bg = COLOR_RED if int(time.monotonic()) % 2 == 0 else COLOR_BLACK
+        key = "red" if int(time.monotonic()) % 2 == 0 else "black"
+    elif level == 3:
+        key = "red"
+    elif level == 2:
+        key = "yellow"
+    elif level == 1:
+        key = "green"
     else:
-        bg = background_for_level(level)
+        key = "black"
 
-    img = Image.new("RGB", (WIDTH, HEIGHT), bg)
+    img = bases[key].copy()
     draw = ImageDraw.Draw(img)
-
-    title_bbox = draw.textbbox((0, 0), APP_TITLE, font=title_font, stroke_width=3)
-    title_w = title_bbox[2] - title_bbox[0]
-    title_x = (WIDTH - title_w) // 2 - title_bbox[0]
-    title_y = BORDER_THICKNESS + INNER_PADDING - title_bbox[1]
-    draw.text(
-        (title_x, title_y),
-        APP_TITLE,
-        font=title_font,
-        fill=(255, 255, 255),
-        stroke_width=3,
-        stroke_fill=(0, 0, 0),
-    )
 
     minutes, seconds = divmod(int(elapsed), 60)
     timer_text = f"{minutes:02d}:{seconds:02d}"
 
-    bbox = draw.textbbox((0, 0), timer_text, font=big_font, stroke_width=6)
+    bbox = draw.textbbox((0, 0), timer_text, font=big_font, stroke_width=8)
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     tx = (WIDTH - tw) // 2 - bbox[0]
     ty = (HEIGHT - th) // 2 - bbox[1]
-    # White fill with a dark stroke keeps the timer readable on every background.
+    # Hard offset shadow for depth, plus stroke so the digits stay legible on every bg.
+    draw.text((tx + 6, ty + 8), timer_text, font=big_font, fill=(0, 0, 0))
     draw.text(
         (tx, ty),
         timer_text,
         font=big_font,
         fill=(255, 255, 255),
-        stroke_width=6,
+        stroke_width=8,
         stroke_fill=(0, 0, 0),
     )
 
     if label:
         label_bbox = draw.textbbox((0, 0), label, font=small_font, stroke_width=2)
         label_h = label_bbox[3] - label_bbox[1]
-        lx = BORDER_THICKNESS + INNER_PADDING - label_bbox[0]
+        lx = BORDER_THICKNESS + INNER_PADDING + 8 - label_bbox[0]
         ly = HEIGHT - BORDER_THICKNESS - INNER_PADDING - label_h - label_bbox[1]
         draw.text(
             (lx, ly),
@@ -194,12 +258,6 @@ def render_frame(state, big_font, small_font, title_font):
             stroke_fill=(0, 0, 0),
         )
 
-    draw.rectangle(
-        [0, 0, WIDTH - 1, HEIGHT - 1],
-        outline=BORDER_COLOR,
-        width=BORDER_THICKNESS,
-    )
-
     return img
 
 
@@ -207,6 +265,7 @@ def camera_loop(state):
     big_font = load_font(300)
     small_font = load_font(40)
     title_font = load_font(60)
+    bases = build_base_backgrounds(title_font)
     try:
         with pyvirtualcam.Camera(width=WIDTH, height=HEIGHT, fps=FPS) as cam:
             with state.lock:
@@ -216,7 +275,7 @@ def camera_loop(state):
                 with state.lock:
                     if not state.broadcast:
                         break
-                img = render_frame(state, big_font, small_font, title_font)
+                img = render_frame(state, big_font, small_font, bases)
                 cam.send(np.asarray(img))
                 state.latest_frame = img
                 cam.sleep_until_next_frame()
