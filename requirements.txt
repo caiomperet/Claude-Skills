@@ -1,3 +1,7 @@
+# toastmasters_timer.py
 pyvirtualcam>=0.10
 Pillow>=10.0
 numpy>=1.24
+
+# koch_curve.py
+matplotlib>=3.7
