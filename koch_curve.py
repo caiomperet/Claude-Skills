@@ -28,6 +28,15 @@ Uso
 Cada iteracao multiplica o numero de segmentos por 4, entao o custo cresce
 rapido: 8 iteracoes ja sao 65.536 segmentos. O limite pratico fica em torno
 de 10 iteracoes.
+
+Medidas
+-------
+A cada execucao o programa mede a polilinha gerada e imprime o comprimento
+total dividido pela aresta da iteracao zero (o segmento unitario de partida).
+A razao aparece tambem no titulo do grafico. Como a medicao e feita somando
+os segmentos, e nao pela formula, ela serve de conferencia: o valor deve
+bater com (4/3)^n na curva e com 3 * (4/3)^n no floco, que parte de tres
+arestas.
 """
 
 import argparse
@@ -37,6 +46,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 MAX_ITERACOES = 12
+
+# Aresta da iteracao zero: tanto a curva quanto cada lado do triangulo do
+# floco partem de um segmento de comprimento 1.
+ARESTA_BASE = 1.0
 
 
 def koch(pontos, iteracoes):
@@ -95,6 +108,26 @@ def floco_de_koch(iteracoes):
     return koch(triangulo, iteracoes)
 
 
+def comprimento(pontos):
+    """Comprimento total da polilinha (soma dos segmentos)."""
+    return float(np.sum(np.linalg.norm(np.diff(pontos, axis=0), axis=1)))
+
+
+def comprimento_relativo(pontos, aresta_base=ARESTA_BASE):
+    """Comprimento total dividido pela aresta da iteracao zero.
+
+    Para a curva simples o valor e (4/3)^n; para o floco, 3 * (4/3)^n, ja que
+    ele parte de tres arestas. O calculo aqui e feito medindo a polilinha, sem
+    usar a formula, entao vale para qualquer polilinha inicial.
+    """
+    return comprimento(pontos) / aresta_base
+
+
+def comprimento_teorico(iteracoes, floco=False):
+    """Valor esperado de comprimento_relativo, para conferencia."""
+    return (3.0 if floco else 1.0) * (4.0 / 3.0) ** iteracoes
+
+
 def plotar(pontos, iteracoes, floco=False, cor="#1f77b4", espessura=1.0,
            fundo="#ffffff", salvar=None, mostrar=True):
     """Desenha a curva com proporcao 1:1, sem eixos."""
@@ -110,8 +143,12 @@ def plotar(pontos, iteracoes, floco=False, cor="#1f77b4", espessura=1.0,
 
     nome = "Floco de neve de Koch" if floco else "Curva de Koch"
     segmentos = len(pontos) - 1
-    ax.set_title(f"{nome} - {iteracoes} iteracoes ({segmentos:,} segmentos)".replace(",", "."),
-                 color="#333333", fontsize=13, pad=16)
+    razao = comprimento_relativo(pontos)
+    titulo = (
+        f"{nome} - {iteracoes} iteracoes ({segmentos:,} segmentos)".replace(",", ".")
+        + f"\nL / aresta inicial = {razao:.6f}"
+    )
+    ax.set_title(titulo, color="#333333", fontsize=13, pad=16)
 
     fig.tight_layout()
 
@@ -125,6 +162,21 @@ def plotar(pontos, iteracoes, floco=False, cor="#1f77b4", espessura=1.0,
         plt.close(fig)
 
     return fig
+
+
+def relatorio(pontos, iteracoes, floco=False, aresta_base=ARESTA_BASE):
+    """Imprime as medidas da curva no terminal."""
+    nome = "Floco de neve de Koch" if floco else "Curva de Koch"
+    total = comprimento(pontos)
+    razao = total / aresta_base
+    teorico = comprimento_teorico(iteracoes, floco)
+    formula = f"3 * (4/3)^{iteracoes}" if floco else f"(4/3)^{iteracoes}"
+
+    print(f"{nome} - {iteracoes} iteracoes")
+    print(f"  segmentos ........... {len(pontos) - 1:,}".replace(",", "."))
+    print(f"  aresta inicial ...... {aresta_base:.6f}")
+    print(f"  comprimento total ... {total:.6f}")
+    print(f"  L / aresta inicial .. {razao:.6f}   (teorico {formula} = {teorico:.6f})")
 
 
 def perguntar_iteracoes():
@@ -182,6 +234,7 @@ def main(argv=None):
             parser.error(str(erro))
 
     pontos = floco_de_koch(iteracoes) if args.floco else curva_de_koch(iteracoes)
+    relatorio(pontos, iteracoes, floco=args.floco)
     plotar(pontos, iteracoes, floco=args.floco, cor=args.cor,
            espessura=args.espessura, fundo=args.fundo, salvar=args.salvar,
            mostrar=not args.sem_janela)
