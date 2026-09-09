@@ -34,8 +34,10 @@ jobs:
 
       - name: Smoke test executable
         run: |
-          .\dist\netmon\netmon.exe status
-          if ($LASTEXITCODE -ne 0) { throw "netmon.exe status failed" }
+          # Executável de janela: o PowerShell não espera por ele, então usamos Start-Process -Wait.
+          $p = Start-Process -FilePath .\dist\netmon\netmon.exe -ArgumentList "status" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "netmon.exe status saiu com código $($p.ExitCode)" }
+          Get-Content (Join-Path $env:LOCALAPPDATA "netmon\config.json") | Select-Object -First 3
 
       - name: Build installer (Inno Setup)
         run: |
