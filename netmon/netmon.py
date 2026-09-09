@@ -48,7 +48,7 @@ import urllib.request
 import webbrowser
 
 APP = "netmon"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 FROZEN = getattr(sys, "frozen", False)
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 SYSTEM = platform.system()
@@ -83,6 +83,8 @@ DEFAULT_CONFIG = {
     "db_path": "netmon.db",
     "log_path": "netmon.log",
     "log_level": "INFO",
+    "retention_days": 0,
+    "update": {"repo": "caiomperet/Claude-Skills", "check_on_start": True},
     "plan": {
         "download_mbps": 0,
         "upload_mbps": 0,
@@ -920,9 +922,26 @@ class Monitor:
         os.replace(tmp, self.paths["pid"])
         self._last_beat = time.time()
 
+    def _prune(self):
+        days = self.cfg.get("retention_days") or 0
+        if not days:
+            return
+        cutoff = time.time() - days * 86400
+        with self.store.lock:
+            for table in ("ping", "dns", "speed", "events"):
+                self.store.conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff,))
+            self.store.conn.commit()
+        log.info("histórico anterior a %d dias removido", days)
+
     def _check_signals(self):
         if time.time() - getattr(self, "_last_beat", 0) >= 10:
             self._write_heartbeat()
+        if time.time() - getattr(self, "_last_prune", 0) >= 86400:
+            self._last_prune = time.time()
+            try:
+                self._prune()
+            except Exception:  # noqa: BLE001
+                log.exception("erro na limpeza do histórico")
         if os.path.exists(self.paths["stop"]):
             log.info("parada solicitada pela interface")
             self.stop.set()
@@ -933,6 +952,87 @@ class Monitor:
                 pass
             log.info("teste de velocidade solicitado pela interface")
             self.test_now.set()
+
+
+# ---- Atualização pelo GitHub Releases --------------------------------------
+
+UPDATE_FILES = ["netmon.py", "netmon_gui.py", "config.example.json", "README.md", "Instalar.bat"]
+
+
+def _version_tuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
+
+
+def check_update(cfg, timeout_s=10):
+    """Consulta a última release. Retorna dict {version, tag, setup_url, newer} ou None se falhar."""
+    repo = cfg.get("update", {}).get("repo") or "caiomperet/Claude-Skills"
+    req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/latest",
+                                 headers={"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        log.info("verificação de atualização falhou: %s", exc)
+        return None
+    tag = data.get("tag_name") or ""
+    setup_url = None
+    for asset in data.get("assets", []):
+        if asset.get("name", "").lower().endswith(".exe"):
+            setup_url = asset.get("browser_download_url")
+    version = ".".join(str(x) for x in _version_tuple(tag)) if tag else ""
+    return {"version": version, "tag": tag, "setup_url": setup_url, "repo": repo,
+            "newer": bool(version) and _version_tuple(version) > _version_tuple(VERSION),
+            "notes_url": data.get("html_url")}
+
+
+def _download(url, dest, timeout_s=120):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp, open(dest, "wb") as fh:
+        while True:
+            chunk = resp.read(256 * 1024)
+            if not chunk:
+                break
+            fh.write(chunk)
+
+
+def apply_update(cfg, info):
+    """Baixa e instala a versão indicada por check_update(). Encerra o monitor antes.
+
+    Instalado como executável (Windows): baixa o netmon-setup.exe e roda em modo
+    silencioso, reabrindo a interface ao final. Rodando do código: substitui os
+    arquivos .py pela versão da tag e reabre a interface. Retorna a linha de
+    comando que foi disparada; o chamador deve encerrar a interface em seguida.
+    """
+    request_stop(cfg)
+    if FROZEN:
+        if not (IS_WINDOWS and info.get("setup_url")):
+            raise RuntimeError("Esta release não tem instalador para o seu sistema.")
+        import tempfile
+        setup = os.path.join(tempfile.gettempdir(), "netmon-setup.exe")
+        _download(info["setup_url"], setup)
+        exe = sys.executable
+        script = (f'timeout /t 3 /nobreak >nul & "{setup}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART '
+                  f'/CLOSEAPPLICATIONS & start "" "{exe}" --install')
+        subprocess.Popen(["cmd", "/c", script], creationflags=(getattr(subprocess, "DETACHED_PROCESS", 0)
+                                                                | getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+        return script
+    base = f"https://raw.githubusercontent.com/{info['repo']}/{info['tag']}/netmon/"
+    staged = []
+    for name in UPDATE_FILES:
+        tmp = os.path.join(BASE_DIR, name + ".new")
+        _download(base + name, tmp)
+        staged.append((tmp, os.path.join(BASE_DIR, name)))
+    for tmp, final in staged:
+        os.replace(tmp, final)
+    cmd = monitor_command(cfg)[:-3] if not FROZEN else [sys.executable]
+    cmd = [cmd[0], os.path.join(BASE_DIR, "netmon_gui.py"), "--install"]
+    kwargs = {"close_fds": True}
+    if IS_WINDOWS:
+        kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0)
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(cmd, **kwargs)
+    return " ".join(cmd)
 
 
 # --------------------------------------------------------------------------

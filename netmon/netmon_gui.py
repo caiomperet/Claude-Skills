@@ -5,7 +5,8 @@ Interface gráfica do netmon (Tkinter, sem dependências externas).
 Ao abrir, inicia o monitor em segundo plano se ele não estiver rodando, mostra
 o estado atual, o resumo dos últimos 7 dias e permite abrir o relatório,
 ajustar as poucas configurações relevantes e ligar o início automático com o
-Windows. Fechar a janela não para o monitor.
+Windows. A aba Histórico traz um gráfico navegável de todas as variáveis
+medidas. Fechar a janela não para o monitor.
 
   python netmon_gui.py            abre a interface
   python netmon_gui.py --install  cria atalhos, liga o início automático,
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import statistics
 import subprocess
 import sys
 import threading
@@ -53,14 +55,415 @@ def open_path(path):
         subprocess.Popen(["xdg-open", path])
 
 
+SERIES = [
+    # chave, rótulo, cor, unidade, tipo de painel
+    ("down", "Download (Mbps)", "#1f77b4", "Mbps", "line"),
+    ("up", "Upload (Mbps)", "#ff7f0e", "Mbps", "line"),
+    ("rtt", "Latência (ms)", "#2ca02c", "ms", "line"),
+    ("jitter", "Jitter (ms)", "#17becf", "ms", "line"),
+    ("loss", "Perda de pacotes (%)", "#d62728", "%", "area"),
+    ("gw_loss", "Perda até o roteador (%)", "#9467bd", "%", "area"),
+    ("dns", "DNS (ms)", "#8c564b", "ms", "line"),
+    ("avail", "Disponibilidade diária (%)", "#16a34a", "%", "bars"),
+]
+DEFAULT_SERIES = {"down", "up", "rtt", "loss", "avail"}
+PERIODS = [("1 dia", 1), ("3 dias", 3), ("7 dias", 7), ("15 dias", 15)]
+DAY = 86400.0
+
+
+def nice_max(v):
+    if not v or v <= 0:
+        return 1.0
+    mag = 10 ** (len(str(int(v))) - 1) if v >= 1 else 0.1
+    for mult in (1, 2, 2.5, 5, 10):
+        if v <= mag * mult:
+            return mag * mult
+    return v
+
+
+class HistoryChart(ttk.Frame):
+    """Gráfico de histórico em Canvas: painéis empilhados, um por variável,
+    escala vertical automática por painel, eixo de tempo compartilhado,
+    navegação por botões, arrasto do mouse e roda (zoom)."""
+
+    def __init__(self, parent, store, cfg):
+        super().__init__(parent)
+        self.store = store
+        self.cfg = cfg
+        self.days = 7
+        self.t1 = time.time()
+        self.follow = True          # janela termina em "agora" e acompanha
+        self.data = None
+        self.loading = False
+        self.dirty = True
+        self.enabled = {k: tk.BooleanVar(value=k in DEFAULT_SERIES) for k, *_ in SERIES}
+        self._drag_x = None
+        self._panels = []
+        self._build()
+        self.after(200, self.reload)
+        self.after(60000, self._auto_refresh)
+
+    def _build(self):
+        bar = ttk.Frame(self)
+        bar.pack(fill="x", padx=8, pady=(8, 2))
+        ttk.Button(bar, text="◀", width=3, command=lambda: self.shift(-0.5)).pack(side="left")
+        ttk.Button(bar, text="▶", width=3, command=lambda: self.shift(0.5)).pack(side="left", padx=(2, 6))
+        ttk.Button(bar, text="Agora", command=self.go_now).pack(side="left")
+        ttk.Label(bar, text="   Janela:").pack(side="left")
+        self.period = ttk.Combobox(bar, values=[n for n, _ in PERIODS], state="readonly", width=8)
+        self.period.set("7 dias")
+        self.period.bind("<<ComboboxSelected>>", lambda e: self.set_days(dict(PERIODS)[self.period.get()]))
+        self.period.pack(side="left", padx=4)
+        self.range_var = tk.StringVar()
+        ttk.Label(bar, textvariable=self.range_var, foreground="#6b7280").pack(side="left", padx=10)
+        ttk.Label(bar, text="arraste para navegar, roda do mouse para aproximar", foreground="#9ca3af",
+                  font=("", 8)).pack(side="right")
+
+        toggles = ttk.Frame(self)
+        toggles.pack(fill="x", padx=8, pady=(0, 4))
+        for i, (key, label, color, _, _) in enumerate(SERIES):
+            cb = tk.Checkbutton(toggles, text=label, variable=self.enabled[key], fg=color,
+                                activeforeground=color, command=self.redraw, anchor="w")
+            cb.grid(row=i // 4, column=i % 4, sticky="w", padx=(0, 10))
+
+        self.canvas = tk.Canvas(self, background="#ffffff", highlightthickness=1, highlightbackground="#e5e7eb")
+        self.canvas.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.canvas.bind("<Configure>", lambda e: self._schedule_redraw())
+        self.canvas.bind("<ButtonPress-1>", self._press)
+        self.canvas.bind("<B1-Motion>", self._drag)
+        self.canvas.bind("<ButtonRelease-1>", self._release)
+        self.canvas.bind("<Motion>", self._hover)
+        self.canvas.bind("<Leave>", lambda e: self.canvas.delete("hover"))
+        self.canvas.bind("<MouseWheel>", self._wheel)           # Windows e macOS
+        self.canvas.bind("<Button-4>", lambda e: self._wheel(e, 1))   # Linux
+        self.canvas.bind("<Button-5>", lambda e: self._wheel(e, -1))
+
+    # ---- navegação -------------------------------------------------------
+
+    @property
+    def t0(self):
+        return self.t1 - self.days * DAY
+
+    def set_days(self, days):
+        self.days = float(days)
+        if self.follow:
+            self.t1 = time.time()
+        self.reload()
+
+    def shift(self, fraction):
+        self.follow = False
+        self.t1 = min(time.time(), self.t1 + fraction * self.days * DAY)
+        if abs(self.t1 - time.time()) < 60:
+            self.follow = True
+        self.reload()
+
+    def go_now(self):
+        self.follow = True
+        self.t1 = time.time()
+        self.reload()
+
+    def _press(self, event):
+        self._drag_x = event.x
+        self._drag_t1 = self.t1
+
+    def _drag(self, event):
+        if self._drag_x is None:
+            return
+        w = max(1, self.canvas.winfo_width() - self._ml - self._mr)
+        dt_s = -(event.x - self._drag_x) / w * self.days * DAY
+        self.t1 = min(time.time(), self._drag_t1 + dt_s)
+        self.follow = abs(self.t1 - time.time()) < 60
+        self._schedule_redraw()
+
+    def _release(self, event):
+        self._drag_x = None
+        self.reload()
+
+    def _wheel(self, event, direction=None):
+        if direction is None:
+            direction = 1 if event.delta > 0 else -1
+        factor = 0.8 if direction > 0 else 1.25
+        w = max(1, self.canvas.winfo_width() - self._ml - self._mr)
+        frac = min(1, max(0, (event.x - self._ml) / w))
+        anchor = self.t0 + frac * self.days * DAY
+        new_days = min(30.0, max(1 / 24, self.days * factor))
+        self.days = new_days
+        self.t1 = min(time.time(), anchor + (1 - frac) * new_days * DAY)
+        self.follow = abs(self.t1 - time.time()) < 60
+        self.period.set(next((n for n, d in PERIODS if d == round(new_days, 3)), f"{new_days:.1f} d"))
+        self.reload()
+
+    # ---- dados -----------------------------------------------------------
+
+    def reload(self):
+        if self.loading:
+            self.dirty = True
+            return
+        self.loading = True
+        t0, t1 = self.t0, self.t1
+        width = max(200, self.canvas.winfo_width())
+
+        def work():
+            try:
+                data = self._load(t0, t1, width)
+                err = None
+            except Exception as exc:  # noqa: BLE001
+                data, err = None, exc
+            self.after(0, lambda: self._loaded(data, err))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _loaded(self, data, err):
+        self.loading = False
+        if err:
+            self.range_var.set(f"erro ao carregar: {err}")
+        else:
+            self.data = data
+            self.redraw()
+        if self.dirty:
+            self.dirty = False
+            self.reload()
+
+    def _auto_refresh(self):
+        if self.follow and self.winfo_ismapped():
+            self.t1 = time.time()
+            self.reload()
+        self.after(60000, self._auto_refresh)
+
+    def _load(self, t0, t1, width):
+        q = self.store.query
+        buckets = max(60, int(width / 3))
+        bucket_s = (t1 - t0) / buckets
+        out = {"t0": t0, "t1": t1, "bucket_s": bucket_s}
+
+        for key, direction in (("down", "download"), ("up", "upload")):
+            rows = q("SELECT ts, mbps FROM speed WHERE ok=1 AND direction=? AND ts BETWEEN ? AND ? ORDER BY ts",
+                     (direction, t0, t1))
+            out[key] = [(r["ts"], r["mbps"]) for r in rows]
+
+        # pings: agrega por ciclo e depois por balde (mediana de latência, máximo de perda)
+        day0 = dt.datetime.fromtimestamp(t0).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        day1 = dt.datetime.fromtimestamp(t1).replace(hour=0, minute=0, second=0, microsecond=0).timestamp() + DAY
+        pings = q("SELECT cycle, kind, loss_pct, rtt_avg, jitter, received, during_speed FROM ping "
+                  "WHERE ts BETWEEN ? AND ? ORDER BY cycle", (day0, day1))
+        cycles = netmon.aggregate_cycles(pings)
+        acc = {}
+        for c in cycles:
+            if not (t0 <= c["ts"] <= t1):
+                continue
+            b = int((c["ts"] - t0) / bucket_s)
+            a = acc.setdefault(b, {"rtt": [], "jitter": [], "loss": [], "gw_loss": []})
+            if not c["during_speed"]:
+                if c["rtt"] is not None:
+                    a["rtt"].append(c["rtt"])
+                if c["jitter"] is not None:
+                    a["jitter"].append(c["jitter"])
+                a["loss"].append(c["loss"])
+            if c["gw_loss"] is not None:
+                a["gw_loss"].append(c["gw_loss"])
+        for key, agg in (("rtt", statistics.median), ("jitter", statistics.median), ("loss", max), ("gw_loss", max)):
+            out[key] = [(t0 + (b + 0.5) * bucket_s, agg(a[key])) for b, a in sorted(acc.items()) if a[key]]
+
+        # disponibilidade por dia (dia local inteiro, mesmo que a janela o corte)
+        by_day = {}
+        for c in cycles:
+            d = dt.datetime.fromtimestamp(c["ts"]).date()
+            tot, down = by_day.get(d, (0, 0))
+            by_day[d] = (tot + 1, down + (1 if c["down"] else 0))
+        out["avail"] = [(dt.datetime.combine(d, dt.time.min).timestamp(), 100.0 * (1 - dn / tot), tot)
+                        for d, (tot, dn) in sorted(by_day.items()) if tot]
+
+        dns = q("SELECT ts, ms FROM dns WHERE ok=1 AND ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))
+        acc = {}
+        for r in dns:
+            acc.setdefault(int((r["ts"] - t0) / bucket_s), []).append(r["ms"])
+        out["dns"] = [(t0 + (b + 0.5) * bucket_s, statistics.median(v)) for b, v in sorted(acc.items())]
+        return out
+
+    # ---- desenho ---------------------------------------------------------
+
+    _ml, _mr, _mt, _mb = 62, 14, 6, 26
+
+    def _schedule_redraw(self):
+        if getattr(self, "_redraw_job", None):
+            self.after_cancel(self._redraw_job)
+        self._redraw_job = self.after(40, self.redraw)
+
+    def _fmt_range(self):
+        a, b = dt.datetime.fromtimestamp(self.t0), dt.datetime.fromtimestamp(self.t1)
+        return f"{a.strftime('%d/%m %H:%M')} a {b.strftime('%d/%m %H:%M')}" + ("  (ao vivo)" if self.follow else "")
+
+    def redraw(self):
+        self._redraw_job = None
+        cv = self.canvas
+        cv.delete("all")
+        self._panels = []
+        self.range_var.set(self._fmt_range())
+        W, H = cv.winfo_width(), cv.winfo_height()
+        if W < 50 or H < 50:
+            return
+        active = [s for s in SERIES if self.enabled[s[0]].get()]
+        if not active:
+            cv.create_text(W / 2, H / 2, text="Selecione ao menos uma variável acima.", fill="#6b7280")
+            return
+        if self.data is None:
+            cv.create_text(W / 2, H / 2, text="Carregando...", fill="#6b7280")
+            return
+        t0, t1 = self.t0, self.t1
+        span = max(1.0, t1 - t0)
+        ml, mr, mt, mb = self._ml, self._mr, self._mt, self._mb
+        pw = W - ml - mr
+        title_h = 16
+        gap = 8
+        ph = (H - mt - mb - len(active) * (title_h + gap)) / len(active)
+        if ph < 30:
+            ph = 30
+
+        def X(ts):
+            return ml + (ts - t0) / span * pw
+
+        # eixo de tempo (compartilhado)
+        step, fmt_t = (3 * 3600, "%Hh") if self.days <= 1.5 else \
+                      (12 * 3600, "%d/%m %Hh") if self.days <= 4 else (DAY, "%d/%m")
+        first = dt.datetime.fromtimestamp(t0).replace(minute=0, second=0, microsecond=0)
+        if step >= DAY:
+            first = first.replace(hour=0)
+        elif step >= 3 * 3600:
+            first = first.replace(hour=first.hour - first.hour % (step // 3600))
+        ts = first.timestamp()
+        ticks = []
+        while ts <= t1:
+            if ts >= t0:
+                ticks.append(ts)
+            ts += step
+        y_bottom = mt + len(active) * (title_h + gap + ph) - gap
+        for ts in ticks:
+            x = X(ts)
+            cv.create_line(x, mt, x, y_bottom, fill="#eef0f3")
+            cv.create_text(x, y_bottom + 12, text=dt.datetime.fromtimestamp(ts).strftime(fmt_t),
+                           fill="#6b7280", font=("", 8))
+
+        y = mt
+        for key, label, color, unit, kind in active:
+            pts = self.data.get(key, [])
+            vals = [p[1] for p in pts]
+            top = y + title_h
+            bottom = top + ph
+            if kind == "bars":
+                lo = min(vals) if vals else 90
+                y_min = 0 if lo < 50 else min(90.0, float(int(lo)))
+                y_max = 100.0
+            else:
+                y_min = 0.0
+                y_max = nice_max(max(vals) if vals else 1)
+                if unit == "%":
+                    y_max = min(100.0, y_max)
+            rng = max(y_max - y_min, 1e-9)
+
+            def Y(v, top=top, bottom=bottom, y_min=y_min, rng=rng):
+                return bottom - (min(max(v, y_min), y_min + rng) - y_min) / rng * (bottom - top)
+
+            stats = ""
+            if vals:
+                stats = (f"   mín {min(vals):.1f}   mediana {statistics.median(vals):.1f}   máx {max(vals):.1f} {unit}"
+                         if kind != "bars" else f"   média {statistics.fmean(vals):.2f}%")
+            cv.create_text(ml, y + 3, text=label + stats, anchor="nw", fill=color, font=("", 9, "bold"))
+            cv.create_rectangle(ml, top, ml + pw, bottom, outline="#e5e7eb")
+            for i in range(3):
+                v = y_min + rng * i / 2
+                yy = Y(v)
+                cv.create_line(ml, yy, ml + pw, yy, fill="#eef0f3")
+                cv.create_text(ml - 6, yy, text=f"{v:g}", anchor="e", fill="#6b7280", font=("", 8))
+            cv.create_text(ml - 6, top - 1, text=f"{y_max:g}", anchor="e", fill="#6b7280", font=("", 8))
+
+            if kind == "bars":
+                for ts, v, n in pts:
+                    x1, x2 = max(ml, X(ts)), min(ml + pw, X(ts + DAY))
+                    if x2 <= x1:
+                        continue
+                    fill = color if v >= 99.5 else ("#f59e0b" if v >= 97 else "#dc2626")
+                    cv.create_rectangle(x1 + 1, Y(v), x2 - 1, bottom, fill=fill, outline="")
+                    if x2 - x1 > 34:
+                        cv.create_text((x1 + x2) / 2, max(top + 8, Y(v) - 8), text=f"{v:.2f}%",
+                                       fill="#374151", font=("", 8))
+            else:
+                gap_s = 4 * max(self.data["bucket_s"], self.cfg["speed"]["interval_s"]
+                                if key in ("down", "up") else self.data["bucket_s"])
+                seg, prev = [], None
+                segments = []
+                for ts, v in pts:
+                    if prev is not None and ts - prev > gap_s and seg:
+                        segments.append(seg)
+                        seg = []
+                    seg.append((ts, v))
+                    prev = ts
+                if seg:
+                    segments.append(seg)
+                for sg in segments:
+                    coords = [c for ts, v in sg for c in (X(ts), Y(v))]
+                    if len(sg) == 1:
+                        x, yy = coords
+                        cv.create_oval(x - 2, yy - 2, x + 2, yy + 2, fill=color, outline="")
+                        continue
+                    if kind == "area":
+                        cv.create_polygon([X(sg[0][0]), bottom] + coords + [X(sg[-1][0]), bottom],
+                                          fill=color, outline="", stipple="gray25")
+                    cv.create_line(*coords, fill=color, width=1.5)
+                if key in ("down", "up"):
+                    plan = self.cfg["plan"].get(f"{'download' if key == 'down' else 'upload'}_mbps") or 0
+                    if plan and y_min <= plan <= y_max:
+                        cv.create_line(ml, Y(plan), ml + pw, Y(plan), fill="#6b7280", dash=(6, 4))
+                        cv.create_text(ml + pw - 4, Y(plan) - 7, text=f"plano {plan:g}", anchor="e",
+                                       fill="#6b7280", font=("", 8))
+            self._panels.append({"key": key, "label": label, "unit": unit, "top": top, "bottom": bottom,
+                                 "pts": pts, "color": color, "kind": kind})
+            y = bottom + gap
+
+    def _hover(self, event):
+        cv = self.canvas
+        cv.delete("hover")
+        if not self._panels or self._drag_x is not None:
+            return
+        W = cv.winfo_width()
+        ml, pw = self._ml, W - self._ml - self._mr
+        if not (ml <= event.x <= ml + pw):
+            return
+        t = self.t0 + (event.x - ml) / pw * (self.t1 - self.t0)
+        cv.create_line(event.x, self._panels[0]["top"], event.x, self._panels[-1]["bottom"], fill="#9ca3af",
+                       dash=(2, 2), tags="hover")
+        for p in self._panels:
+            if not p["pts"]:
+                continue
+            if p["kind"] == "bars":
+                near = next((q for q in p["pts"] if q[0] <= t < q[0] + DAY), None)
+                if near:
+                    txt = f"{dt.datetime.fromtimestamp(near[0]).strftime('%d/%m')}: {near[1]:.2f}% ({near[2]} ciclos)"
+                else:
+                    continue
+            else:
+                near = min(p["pts"], key=lambda q: abs(q[0] - t))
+                if abs(near[0] - t) > (self.t1 - self.t0) / 20:
+                    continue
+                txt = f"{dt.datetime.fromtimestamp(near[0]).strftime('%d/%m %H:%M')}: {near[1]:.1f} {p['unit']}"
+            x = event.x + 10 if event.x < W - 200 else event.x - 10
+            anchor = "w" if event.x < W - 200 else "e"
+            tid = cv.create_text(x, p["top"] + 10, text=txt, anchor=anchor, fill=p["color"], font=("", 9, "bold"),
+                                 tags="hover")
+            bbox = cv.bbox(tid)
+            cv.create_rectangle(bbox[0] - 3, bbox[1] - 2, bbox[2] + 3, bbox[3] + 2, fill="#ffffff", outline="#e5e7eb",
+                                tags="hover")
+            cv.tag_raise(tid)
+
+
 class App:
     def __init__(self, root, cfg):
         self.root = root
         self.cfg = cfg
         self.store = netmon.Store(cfg["db_path"])
         self.busy = False
-        root.title("netmon: qualidade da internet")
-        root.minsize(760, 640)
+        root.title(f"netmon {netmon.VERSION}: qualidade da internet")
+        root.minsize(780, 660)
+        self.update_info = None
         try:
             ttk.Style().theme_use("vista" if netmon.IS_WINDOWS else "clam")
         except tk.TclError:
@@ -70,6 +473,8 @@ class App:
         self._tick_status()
         self._tick_data()
         self._tick_summary()
+        if cfg.get("update", {}).get("check_on_start", True):
+            threading.Thread(target=self._check_update_bg, daemon=True).start()
 
     # ---- construção ------------------------------------------------------
 
@@ -77,6 +482,16 @@ class App:
         pad = {"padx": 12, "pady": 6}
         top = ttk.Frame(self.root)
         top.pack(fill="x", **pad)
+        self.nb = ttk.Notebook(self.root)
+        self.nb.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        panel = ttk.Frame(self.nb)
+        self.nb.add(panel, text="  Painel  ")
+        self.chart = HistoryChart(self.nb, self.store, self.cfg)
+        self.nb.add(self.chart, text="  Histórico  ")
+        self.nb.bind("<<NotebookTabChanged>>", lambda e: self.chart.reload() if self.nb.index("current") == 1 else None)
+        self.btn_update = ttk.Button(top, text="Atualizar", command=self.do_update)
+        self.btn_update.pack(side="right", padx=(6, 0))
+        self.btn_update.pack_forget()
         self.dot = tk.Canvas(top, width=16, height=16, highlightthickness=0)
         self.dot_id = self.dot.create_oval(2, 2, 14, 14, fill="#9ca3af", outline="")
         self.dot.pack(side="left")
@@ -86,7 +501,7 @@ class App:
         self.btn_toggle.pack(side="right")
         ttk.Button(top, text="Testar velocidade agora", command=self.test_now).pack(side="right", padx=6)
 
-        tiles = ttk.LabelFrame(self.root, text="Agora")
+        tiles = ttk.LabelFrame(panel, text="Agora")
         tiles.pack(fill="x", **pad)
         self.tiles = {}
         for col, (key, title) in enumerate([("ping", "Internet"), ("gw", "Roteador"), ("down", "Download"),
@@ -101,7 +516,7 @@ class App:
             s.pack(anchor="w")
             self.tiles[key] = (v, s)
 
-        summ = ttk.LabelFrame(self.root, text="Últimos 7 dias")
+        summ = ttk.LabelFrame(panel, text="Últimos 7 dias")
         summ.pack(fill="x", **pad)
         self.summary_var = tk.StringVar(value="Calculando...")
         ttk.Label(summ, textvariable=self.summary_var, justify="left", font=("Consolas" if netmon.IS_WINDOWS
@@ -111,12 +526,13 @@ class App:
         self.conclusion.pack(anchor="w", padx=10, pady=(2, 8))
         row = ttk.Frame(summ)
         row.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Button(row, text="Ver histórico", command=lambda: self.nb.select(1)).pack(side="left", padx=(0, 6))
         ttk.Button(row, text="Abrir relatório (7 dias)", command=lambda: self.report(7)).pack(side="left")
         ttk.Button(row, text="Relatório (30 dias)", command=lambda: self.report(30)).pack(side="left", padx=6)
         ttk.Button(row, text="Exportar CSV", command=self.export_csv).pack(side="left")
         ttk.Button(row, text="Abrir pasta de dados", command=lambda: open_path(self.cfg["_dir"])).pack(side="left", padx=6)
 
-        conf = ttk.LabelFrame(self.root, text="Configurações")
+        conf = ttk.LabelFrame(panel, text="Configurações")
         conf.pack(fill="x", **pad)
         g = ttk.Frame(conf, padding=(10, 6))
         g.pack(fill="x")
@@ -152,7 +568,7 @@ class App:
             row=5, column=0, columnspan=5, sticky="w", pady=(6, 0))
         self._load_settings()
 
-        logf = ttk.LabelFrame(self.root, text="Registro")
+        logf = ttk.LabelFrame(panel, text="Registro")
         logf.pack(fill="both", expand=True, **pad)
         self.log = tk.Text(logf, height=7, font=("Consolas" if netmon.IS_WINDOWS else "TkFixedFont", 8),
                            state="disabled", wrap="none", relief="flat", background="#f9fafb")
@@ -280,6 +696,7 @@ class App:
                       "quiet_hours": [q.replace(" ", "") for q in quiet]},
         }
         self.cfg = netmon.save_config(self.cfg, changes)
+        self.chart.cfg = self.cfg
         self._update_budget_label()
         if netmon.IS_WINDOWS:
             try:
@@ -402,6 +819,36 @@ class App:
             self.root.after(0, lambda: done(st))
         except Exception as exc:  # noqa: BLE001
             self.root.after(0, lambda: self.summary_var.set(f"Sem dados suficientes ainda ({exc})."))
+
+
+    # ---- atualização -----------------------------------------------------
+
+    def _check_update_bg(self):
+        info = netmon.check_update(self.cfg)
+        if info and info["newer"]:
+            self.update_info = info
+            self.root.after(0, self._show_update)
+
+    def _show_update(self):
+        v = self.update_info["version"]
+        self.btn_update.config(text=f"Atualizar para {v}")
+        self.btn_update.pack(side="right", padx=(6, 0))
+        self.msg_var.set(f"Nova versão {v} disponível. Clique em \"Atualizar para {v}\" para instalar.")
+
+    def do_update(self):
+        info = self.update_info
+        if not info:
+            return
+        if not messagebox.askyesno("netmon", f"Instalar a versão {info['version']} agora? O monitor será reiniciado "
+                                            "e esta janela vai fechar e reabrir sozinha."):
+            return
+        self.msg_var.set("Baixando e instalando a atualização...")
+        self.btn_update.state(["disabled"])
+
+        def done(_):
+            self.root.after(500, self.root.destroy)
+
+        self._run_bg(lambda: netmon.apply_update(self.cfg, info), done)
 
 
 def do_install(cfg):

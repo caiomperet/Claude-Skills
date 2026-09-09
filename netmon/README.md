@@ -83,6 +83,27 @@ A janela mostra:
   velocidade e a opção de iniciar junto com o Windows;
 - as últimas linhas do registro.
 
+A aba **Histórico** mostra o gráfico de todas as variáveis medidas, cada uma
+em um painel com escala vertical própria e automática, ajustada ao que está
+visível: download, upload, latência, jitter, perda de pacotes, perda até o
+roteador, tempo de DNS e disponibilidade por dia. Marque e desmarque as
+variáveis que quer ver. A janela de tempo vai de 1 a 15 dias (até 30 com a
+roda do mouse) e pode ser navegada com os botões, arrastando o gráfico ou com
+a roda do mouse para aproximar. "Agora" volta ao presente e o gráfico passa a
+se atualizar sozinho a cada minuto. Passe o mouse sobre o gráfico para ler o
+valor e o horário de cada ponto.
+
+O histórico é mantido por tempo indeterminado (cerca de 300 MB por ano com os
+padrões). Para limitar, defina `retention_days` no `config.json`; zero mantém
+tudo.
+
+**Atualizações**: ao abrir, a interface consulta a última release do
+repositório. Se houver versão mais nova, aparece o botão "Atualizar para X",
+que baixa e instala sozinho, reinicia o monitor e reabre a janela. No Windows
+instalado pelo `netmon-setup.exe`, o instalador roda em modo silencioso; nas
+instalações a partir do código, os arquivos são substituídos pela versão da
+release. Para desligar a verificação, `update.check_on_start: false`.
+
 Fechar a janela não interrompe a coleta: o monitor é um processo separado, sem
 janela, que continua rodando. Ao abrir a interface de novo, se o monitor
 estiver parado ela o inicia. Salvar as configurações reinicia o monitor para
