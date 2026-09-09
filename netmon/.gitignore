@@ -1,0 +1,8 @@
+config.json
+*.db
+*.db-wal
+*.db-shm
+*.log
+*.log.*
+report.html
+*.csv

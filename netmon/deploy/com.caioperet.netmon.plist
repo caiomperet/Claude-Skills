@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchAgent para macOS. Troque SEU_USUARIO pelo seu nome de usuário e o
+  caminho do python3 se for diferente (veja com: which python3).
+    cp com.caioperet.netmon.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.caioperet.netmon.plist
+  Para parar:
+    launchctl unload -w ~/Library/LaunchAgents/com.caioperet.netmon.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.caioperet.netmon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/SEU_USUARIO/Claude-Skills/netmon/netmon.py</string>
+    <string>run</string>
+    <string>--quiet</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/SEU_USUARIO/Claude-Skills/netmon</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardErrorPath</key><string>/tmp/netmon.err</string>
+</dict>
+</plist>

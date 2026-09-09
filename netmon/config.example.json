@@ -1,0 +1,49 @@
+{
+  "db_path": "netmon.db",
+  "log_path": "netmon.log",
+  "log_level": "INFO",
+  "plan": {
+    "download_mbps": 0,
+    "upload_mbps": 0
+  },
+  "ping": {
+    "interval_s": 60,
+    "hosts": [
+      "1.1.1.1",
+      "8.8.8.8",
+      "9.9.9.9"
+    ],
+    "gateway": "auto",
+    "count": 10,
+    "packet_interval_ms": 500,
+    "timeout_s": 2,
+    "method": "auto",
+    "tcp_port": 443
+  },
+  "dns": {
+    "interval_s": 300,
+    "names": [
+      "www.google.com",
+      "www.cloudflare.com",
+      "www.microsoft.com"
+    ],
+    "timeout_s": 5
+  },
+  "speed": {
+    "interval_s": 1800,
+    "download_bytes": 10000000,
+    "upload_bytes": 4000000,
+    "max_seconds": 12,
+    "timeout_s": 25,
+    "download_urls": [
+      "https://speed.cloudflare.com/__down?bytes={bytes}"
+    ],
+    "upload_urls": [
+      "https://speed.cloudflare.com/__up"
+    ],
+    "skip_if_busy_mbps": 2.0,
+    "busy_retry_s": 300,
+    "daily_budget_mb": 1500,
+    "quiet_hours": []
+  }
+}

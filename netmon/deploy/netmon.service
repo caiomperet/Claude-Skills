@@ -1,0 +1,22 @@
+# Unidade systemd de usuário (Linux). Ajuste o caminho do script se necessário.
+#   mkdir -p ~/.config/systemd/user
+#   cp netmon.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now netmon
+#   loginctl enable-linger $USER      # continua rodando sem sessão aberta
+#   journalctl --user -u netmon -f    # acompanhar o log
+
+[Unit]
+Description=netmon: monitor de qualidade da internet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 %h/Claude-Skills/netmon/netmon.py run --quiet
+WorkingDirectory=%h/Claude-Skills/netmon
+Restart=on-failure
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=default.target
