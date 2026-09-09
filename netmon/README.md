@@ -1,7 +1,7 @@
 # netmon: monitor leve da conexão de internet
 
-Um único arquivo Python, sem dependências externas, que roda em segundo plano e
-registra a qualidade da sua conexão ao longo de dias ou semanas. O objetivo é
+Um app Python sem dependências externas, com interface gráfica e instalador
+para Windows, que roda em segundo plano e registra a qualidade da sua conexão ao longo de dias ou semanas. O objetivo é
 responder com dados, e não com impressão, a três perguntas:
 
 1. O problema é da rede local (Wi-Fi, cabo, roteador) ou do provedor?
@@ -43,43 +43,82 @@ comparação entre horários e a variação ao longo dos dias, e para isso o mé
 é consistente. Se quiser valores absolutos mais próximos do teste completo,
 aumente `download_bytes` e `upload_bytes` (e o custo de banda junto).
 
-## Instalação
+## Instalação no Windows sem digitar nada
 
-Requisito: Python 3.9 ou mais novo (`python --version`). Nenhum `pip install`
-é necessário.
+Há duas formas; as duas criam um atalho "netmon" na Área de Trabalho e no Menu
+Iniciar, ligam o início automático com o Windows, iniciam o monitor em segundo
+plano e abrem a interface.
+
+**Opção A: instalador `netmon-setup.exe`.** Baixe o arquivo em *Releases* do
+repositório (ou em *Actions*, artefato `netmon-setup`, na execução mais
+recente) e dê dois cliques. Não exige Python nem administrador; instala em
+`%LOCALAPPDATA%\Programs\netmon`. O Windows pode mostrar o aviso "aplicativo
+não reconhecido" por o executável não ser assinado; clique em "Mais
+informações" e "Executar assim mesmo". Para desinstalar, use "Aplicativos
+instalados" nas Configurações do Windows.
+
+**Opção B: `Instalar.bat`.** Baixe a pasta `netmon` (ou o repositório inteiro
+como ZIP e descompacte) e dê dois cliques em `Instalar.bat`. Se o Python não
+estiver instalado, ele baixa o instalador oficial de python.org e instala em
+modo silencioso, sem perguntas. Depois copia o programa para
+`%LOCALAPPDATA%\Programs\netmon` e faz o resto.
+
+Em qualquer das opções, a única coisa a preencher depois é a velocidade do
+plano contratado, na seção Configurações da interface, para que o relatório
+possa comparar o medido com o vendido.
+
+## A interface
+
+A janela mostra:
+
+- o estado do monitor (verde rodando, vermelho parado), com botões para parar,
+  iniciar e disparar um teste de velocidade imediato;
+- o painel "Agora": última latência e perda até a internet e até o roteador,
+  última velocidade de download e upload e a disponibilidade das últimas 24 h;
+- o resumo dos últimos 7 dias com a conclusão do diagnóstico e botões para
+  abrir o relatório completo (7 ou 30 dias), exportar CSV e abrir a pasta de
+  dados;
+- as configurações que importam: velocidade do plano, frequência e tamanho do
+  teste de velocidade (com o consumo diário estimado), horários sem teste de
+  velocidade e a opção de iniciar junto com o Windows;
+- as últimas linhas do registro.
+
+Fechar a janela não interrompe a coleta: o monitor é um processo separado, sem
+janela, que continua rodando. Ao abrir a interface de novo, se o monitor
+estiver parado ela o inicia. Salvar as configurações reinicia o monitor para
+aplicá-las.
+
+## Instalação a partir do código (macOS, Linux ou quem preferir)
+
+Requisito: Python 3.9 ou mais novo com Tkinter (o instalador de python.org já
+inclui; no Linux, `sudo apt install python3-tk`). Nenhum `pip install` é
+necessário.
 
 ```
 cd netmon
-python netmon.py once
+python netmon_gui.py          # interface (inicia o monitor sozinha)
+python netmon.py once         # ou, sem interface: valida a instalação
+python netmon.py start        # inicia o monitor em segundo plano
+python netmon.py status       # confere se está rodando
+python netmon.py stop         # para
 ```
 
-O comando `once` cria o `config.json` a partir dos padrões, detecta o roteador,
-escolhe o método de ping e roda todas as medições uma vez, imprimindo o
-resultado. Se tudo aparecer, edite o `config.json`:
+Rodando a partir do código, `config.json`, banco e log ficam ao lado do
+script. No executável instalado ficam em `%LOCALAPPDATA%\netmon` (Windows),
+`~/Library/Application Support/netmon` (macOS) ou `~/.local/share/netmon`
+(Linux). A variável de ambiente `NETMON_HOME` sobrepõe isso.
 
-- `plan.download_mbps` e `plan.upload_mbps`: a velocidade contratada. Sem isso o
-  relatório não consegue dizer se o provedor entrega o que vende.
-- `speed.quiet_hours`: horários das suas reuniões fixas, se houver.
+No `config.json`, além do que a interface expõe, pode interessar:
+
 - `ping.gateway`: deixe `"auto"`; se a detecção falhar, informe o IP do roteador
   (em geral 192.168.0.1 ou 192.168.1.1).
 
-Para rodar continuamente em primeiro plano (útil para testar):
-
-```
-python netmon.py run
-```
-
 ## Deixar rodando em segundo plano
 
-**Windows**: no PowerShell, dentro da pasta `deploy`:
-
-```
-powershell -ExecutionPolicy Bypass -File .\install-windows-task.ps1
-```
-
-Isso registra uma tarefa agendada que inicia no logon, roda com `pythonw.exe`
-(sem janela) e reinicia sozinha se cair. Para remover:
-`Unregister-ScheduledTask -TaskName netmon -Confirm:$false`.
+**Windows**: a caixa "Iniciar o monitor junto com o Windows" na interface cria
+um atalho na pasta Inicializar do usuário (sem administrador). Os instaladores
+já deixam isso ligado. Alternativa por tarefa agendada, que também reinicia o
+processo se ele cair: `deploy/install-windows-task.ps1`.
 
 **macOS**: edite `deploy/com.caioperet.netmon.plist` (usuário e caminho), copie
 para `~/Library/LaunchAgents/` e carregue com `launchctl load -w`. As instruções
@@ -88,10 +127,27 @@ estão no próprio arquivo.
 **Linux**: `deploy/netmon.service` é uma unidade systemd de usuário. As
 instruções estão no próprio arquivo.
 
-Em qualquer sistema o log fica em `netmon.log` ao lado do script, com rotação
+Em qualquer sistema o log fica em `netmon.log` na pasta de dados, com rotação
 automática.
 
+## Gerar o instalador Windows
+
+O workflow `.github/workflows/netmon-windows.yml` roda a cada push que toque a
+pasta `netmon` e publica o artefato `netmon-setup.exe`; um push de tag
+`netmon-v*` também cria uma Release com o arquivo. Para gerar localmente em um
+PC Windows com Python e Inno Setup 6 instalados:
+
+```
+powershell -ExecutionPolicy Bypass -File .\deploy\build-windows.ps1
+```
+
+O executável é gerado com PyInstaller (pasta `dist\netmon`) e empacotado por
+`deploy/netmon.iss`.
+
 ## Ler os resultados
+
+Pela interface: botões "Abrir relatório" e "Exportar CSV". Pela linha de
+comando:
 
 ```
 python netmon.py summary --days 7          # resumo em texto no terminal
@@ -142,3 +198,7 @@ Banco SQLite `netmon.db` com quatro tabelas: `ping` (uma linha por host por
 ciclo), `dns`, `speed` (uma linha por direção por teste, inclusive falhas) e
 `events` (início e parada do monitor, quedas, testes adiados e o motivo). Todos
 os horários são timestamps Unix; o CSV exportado inclui a data legível.
+
+Arquivos de controle na pasta de dados: `netmon.pid` (heartbeat do monitor, é
+como a interface sabe que ele está vivo), `netmon.stop` (pedido de parada) e
+`netmon.testnow` (pedido de teste imediato).

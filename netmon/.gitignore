@@ -6,3 +6,11 @@ config.json
 *.log.*
 report.html
 *.csv
+relatorio_*.html
+netmon.pid
+netmon.pid.tmp
+netmon.stop
+netmon.testnow
+build/
+dist/
+*.spec

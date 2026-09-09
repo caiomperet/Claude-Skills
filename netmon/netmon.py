@@ -48,12 +48,35 @@ import urllib.request
 import webbrowser
 
 APP = "netmon"
-VERSION = "1.0.0"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VERSION = "1.1.0"
+FROZEN = getattr(sys, "frozen", False)
+BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 SYSTEM = platform.system()
 IS_WINDOWS = SYSTEM == "Windows"
 IS_MAC = SYSTEM == "Darwin"
 IS_LINUX = SYSTEM == "Linux"
+
+
+def default_data_dir():
+    """Onde ficam config, banco e log.
+
+    Rodando a partir do código-fonte, ao lado do script (comportamento simples
+    e portátil). Instalado como executável, na pasta de dados do usuário, para
+    não gravar dentro de Program Files nem em pastas temporárias.
+    """
+    env = os.environ.get("NETMON_HOME")
+    if env:
+        return env
+    if not FROZEN:
+        return BASE_DIR
+    if IS_WINDOWS:
+        return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), APP)
+    if IS_MAC:
+        return os.path.expanduser(f"~/Library/Application Support/{APP}")
+    return os.path.expanduser(f"~/.local/share/{APP}")
+
+
+DATA_DIR = default_data_dir()
 USER_AGENT = f"{APP}/{VERSION} (+https://github.com/caiomperet/Claude-Skills)"
 
 DEFAULT_CONFIG = {
@@ -127,7 +150,8 @@ def deep_merge(base, override):
 
 
 def load_config(path=None):
-    path = path or os.path.join(BASE_DIR, "config.json")
+    path = path or os.path.join(DATA_DIR, "config.json")
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     user_cfg = {}
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
@@ -142,7 +166,22 @@ def load_config(path=None):
         if cfg[key] and not os.path.isabs(cfg[key]):
             cfg[key] = os.path.join(cfg_dir, cfg[key])
     cfg["_path"] = path
+    cfg["_dir"] = cfg_dir
     return cfg
+
+
+def save_config(cfg, changes):
+    """Grava só o que difere do padrão, preservando o que o usuário já tinha."""
+    path = cfg["_path"]
+    current = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            current = json.load(fh)
+    merged = deep_merge(current, changes)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(merged, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    return load_config(path)
 
 
 def setup_logging(cfg, to_console=True):
@@ -520,15 +559,161 @@ def in_quiet_hours(ranges, now=None):
 # Monitor (laços periódicos)
 # --------------------------------------------------------------------------
 
+def control_paths(cfg):
+    d = cfg["_dir"]
+    return {"pid": os.path.join(d, "netmon.pid"), "stop": os.path.join(d, "netmon.stop"),
+            "testnow": os.path.join(d, "netmon.testnow")}
+
+
+def monitor_status(cfg, stale_s=90):
+    """Lê o arquivo de heartbeat. Retorna dict com running, pid, started, heartbeat."""
+    paths = control_paths(cfg)
+    try:
+        with open(paths["pid"], encoding="utf-8") as fh:
+            info = json.load(fh)
+    except (OSError, ValueError):
+        return {"running": False, "pid": None, "started": None, "heartbeat": None}
+    age = time.time() - float(info.get("heartbeat", 0))
+    info["running"] = age < stale_s
+    info["age_s"] = age
+    return info
+
+
+def request_stop(cfg, wait_s=15):
+    paths = control_paths(cfg)
+    if not monitor_status(cfg)["running"]:
+        return True
+    with open(paths["stop"], "w", encoding="utf-8") as fh:
+        fh.write(str(time.time()))
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        if not os.path.exists(paths["pid"]):
+            return True
+        time.sleep(0.5)
+    return not monitor_status(cfg)["running"]
+
+
+def request_speed_test(cfg):
+    with open(control_paths(cfg)["testnow"], "w", encoding="utf-8") as fh:
+        fh.write(str(time.time()))
+
+
+def monitor_command(cfg):
+    """Linha de comando que inicia o monitor em segundo plano."""
+    if FROZEN:
+        cmd = [sys.executable]
+    else:
+        exe = sys.executable
+        if IS_WINDOWS and exe.lower().endswith("python.exe"):
+            candidate = exe[:-10] + "pythonw.exe"
+            if os.path.exists(candidate):
+                exe = candidate
+        cmd = [exe, os.path.join(BASE_DIR, "netmon.py")]
+    return cmd + ["--config", cfg["_path"], "run", "--quiet"]
+
+
+def spawn_monitor(cfg):
+    """Inicia o monitor como processo independente e sem janela."""
+    if monitor_status(cfg)["running"]:
+        return monitor_status(cfg)["pid"]
+    for name in ("stop",):
+        try:
+            os.remove(control_paths(cfg)[name])
+        except OSError:
+            pass
+    kwargs = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
+              "cwd": cfg["_dir"]}
+    if IS_WINDOWS:
+        kwargs["creationflags"] = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                                   | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                                   | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(monitor_command(cfg), **kwargs)
+    return proc.pid
+
+
+# ---- Atalhos e início automático (Windows) ---------------------------------
+
+def _windows_special_folder(name):
+    out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                          f"[Environment]::GetFolderPath('{name}')"],
+                         capture_output=True, text=True, errors="replace", timeout=20,
+                         **_subprocess_flags()).stdout.strip()
+    return out or None
+
+
+def _windows_shortcut(path, target, args, workdir, description):
+    ps = (
+        "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{path}'); "
+        "$s.TargetPath = '{target}'; $s.Arguments = '{args}'; $s.WorkingDirectory = '{wd}'; "
+        "$s.Description = '{desc}'; $s.WindowStyle = 7; $s.Save()"
+    ).format(path=path.replace("'", "''"), target=target.replace("'", "''"),
+             args=args.replace("'", "''"), wd=workdir.replace("'", "''"), desc=description)
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, timeout=30,
+                   capture_output=True, **_subprocess_flags())
+
+
+def autostart_shortcut_path():
+    if not IS_WINDOWS:
+        return None
+    folder = _windows_special_folder("Startup")
+    return os.path.join(folder, "netmon monitor.lnk") if folder else None
+
+
+def autostart_enabled():
+    p = autostart_shortcut_path()
+    return bool(p and os.path.exists(p))
+
+
+def set_autostart(cfg, enabled):
+    """Cria ou remove o atalho na pasta Inicializar do usuário (sem admin)."""
+    if not IS_WINDOWS:
+        raise RuntimeError("Início automático pela interface só está disponível no Windows; "
+                           "veja a pasta deploy para macOS e Linux.")
+    p = autostart_shortcut_path()
+    if not p:
+        raise RuntimeError("Pasta Inicializar não encontrada")
+    if enabled:
+        cmd = monitor_command(cfg)
+        _windows_shortcut(p, cmd[0], " ".join(f'"{a}"' for a in cmd[1:]), cfg["_dir"],
+                          "Monitor de qualidade da internet (segundo plano)")
+    elif os.path.exists(p):
+        os.remove(p)
+
+
+def install_shortcuts(cfg):
+    """Atalhos da interface no Menu Iniciar e na Área de Trabalho (Windows)."""
+    if not IS_WINDOWS:
+        return []
+    if FROZEN:
+        target, args = sys.executable, ""
+    else:
+        cmd = monitor_command(cfg)
+        target = cmd[0]
+        args = f'"{os.path.join(BASE_DIR, "netmon_gui.py")}"'
+    created = []
+    for folder_name, file_name in (("Programs", "netmon.lnk"), ("Desktop", "netmon.lnk")):
+        folder = _windows_special_folder(folder_name)
+        if folder:
+            path = os.path.join(folder, file_name)
+            _windows_shortcut(path, target, args, cfg["_dir"], "Monitor de qualidade da internet")
+            created.append(path)
+    return created
+
+
 class Monitor:
     def __init__(self, cfg, store):
         self.cfg = cfg
         self.store = store
         self.stop = threading.Event()
         self.speed_running = threading.Event()
+        self.test_now = threading.Event()
         self.ping_method = None
         self.gateway = None
         self.down = False
+        self.started = time.time()
+        self.paths = control_paths(cfg)
 
     def setup(self):
         pcfg = self.cfg["ping"]
@@ -673,9 +858,15 @@ class Monitor:
 
     # ---- laço -------------------------------------------------------------
 
-    def _loop(self, name, interval_key, fn):
+    def _loop(self, name, interval_key, fn, trigger=None):
         next_run = time.time()
         while not self.stop.is_set():
+            if trigger is not None and trigger.is_set():
+                trigger.clear()
+                try:
+                    fn(force=True)
+                except Exception:  # noqa: BLE001
+                    log.exception("erro no teste manual de %s", name)
             if time.time() >= next_run:
                 started = time.time()
                 retry = None
@@ -697,13 +888,16 @@ class Monitor:
         threads = [
             threading.Thread(target=self._loop, args=("ping", "interval_s", self.ping_cycle), daemon=True),
             threading.Thread(target=self._loop, args=("dns", "interval_s", self.dns_cycle), daemon=True),
-            threading.Thread(target=self._loop, args=("speed", "interval_s", self.speed_cycle), daemon=True),
+            threading.Thread(target=self._loop, args=("speed", "interval_s", self.speed_cycle, self.test_now),
+                             daemon=True),
         ]
         for th in threads:
             th.start()
         try:
+            self._write_heartbeat()
             while not self.stop.is_set():
                 self.stop.wait(1.0)
+                self._check_signals()
         except KeyboardInterrupt:
             pass
         finally:
@@ -711,7 +905,34 @@ class Monitor:
             for th in threads:
                 th.join(timeout=5)
             self.store.event("stop", "")
+            for key in ("pid", "stop"):
+                try:
+                    os.remove(self.paths[key])
+                except OSError:
+                    pass
             log.info("netmon encerrado")
+
+    def _write_heartbeat(self):
+        tmp = self.paths["pid"] + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"pid": os.getpid(), "started": self.started, "heartbeat": time.time(),
+                       "gateway": self.gateway, "ping_method": self.ping_method, "version": VERSION}, fh)
+        os.replace(tmp, self.paths["pid"])
+        self._last_beat = time.time()
+
+    def _check_signals(self):
+        if time.time() - getattr(self, "_last_beat", 0) >= 10:
+            self._write_heartbeat()
+        if os.path.exists(self.paths["stop"]):
+            log.info("parada solicitada pela interface")
+            self.stop.set()
+        if os.path.exists(self.paths["testnow"]):
+            try:
+                os.remove(self.paths["testnow"])
+            except OSError:
+                pass
+            log.info("teste de velocidade solicitado pela interface")
+            self.test_now.set()
 
 
 # --------------------------------------------------------------------------
@@ -1344,6 +1565,9 @@ def render_text(cfg, st):
 
 def cmd_run(args, cfg):
     setup_logging(cfg, to_console=not args.quiet)
+    if monitor_status(cfg)["running"]:
+        log.error("já existe um monitor rodando (pid %s); saindo", monitor_status(cfg)["pid"])
+        return
     store = Store(cfg["db_path"])
     mon = Monitor(cfg, store)
     try:
@@ -1423,12 +1647,37 @@ def cmd_export(args, cfg):
     store.close()
 
 
+def cmd_stop(args, cfg):
+    print("monitor parado" if request_stop(cfg) else "monitor não respondeu ao pedido de parada")
+
+
+def cmd_start(args, cfg):
+    st = monitor_status(cfg)
+    if st["running"]:
+        print(f"monitor já está rodando (pid {st['pid']})")
+    else:
+        pid = spawn_monitor(cfg)
+        print(f"monitor iniciado em segundo plano (pid {pid}); log em {cfg['log_path']}")
+
+
+def cmd_status(args, cfg):
+    st = monitor_status(cfg)
+    if st["running"]:
+        print(f"rodando: pid {st['pid']}, desde {fmt_ts(st['started'])}, gateway {st.get('gateway')}, "
+              f"ping {st.get('ping_method')}")
+    else:
+        print("parado")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog=APP, description="Monitor leve de qualidade da conexão de internet.")
     ap.add_argument("--config", help="caminho do config.json (padrão: ao lado do script)")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("run", help="monitora continuamente")
+    p = sub.add_parser("run", help="monitora continuamente (primeiro plano)")
     p.add_argument("--quiet", action="store_true", help="não escreve log no console (só no arquivo)")
+    sub.add_parser("start", help="inicia o monitor em segundo plano")
+    sub.add_parser("stop", help="para o monitor em segundo plano")
+    sub.add_parser("status", help="mostra se o monitor está rodando")
     sub.add_parser("once", help="executa todas as medições uma vez e mostra o resultado")
     p = sub.add_parser("summary", help="resumo em texto")
     p.add_argument("--days", type=float, default=7)
@@ -1443,7 +1692,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     {"run": cmd_run, "once": cmd_once, "summary": cmd_summary, "report": cmd_report,
-     "export": cmd_export}[args.cmd](args, cfg)
+     "export": cmd_export, "start": cmd_start, "stop": cmd_stop, "status": cmd_status}[args.cmd](args, cfg)
 
 
 if __name__ == "__main__":
