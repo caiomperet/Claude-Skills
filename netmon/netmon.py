@@ -70,7 +70,16 @@ def default_data_dir():
     if not FROZEN:
         return BASE_DIR
     if IS_WINDOWS:
-        return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), APP)
+        local = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+        new_dir = os.path.join(local, APP)
+        # Instalações feitas pelo Instalar.bat guardam os dados na pasta do
+        # programa. Se ela já tem um banco e a pasta nova não, continua nela
+        # para que a troca para o instalador não pareça perda de histórico.
+        legacy = os.path.join(local, "Programs", APP)
+        if (os.path.exists(os.path.join(legacy, "netmon.db"))
+                and not os.path.exists(os.path.join(new_dir, "netmon.db"))):
+            return legacy
+        return new_dir
     if IS_MAC:
         return os.path.expanduser(f"~/Library/Application Support/{APP}")
     return os.path.expanduser(f"~/.local/share/{APP}")
