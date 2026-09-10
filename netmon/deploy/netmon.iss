@@ -4,7 +4,7 @@
 ; automático e abre a interface ao final.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.1.0"
+  #define MyAppVersion "1.3.2"
 #endif
 #define MyAppName "netmon"
 #define MyAppExeName "netmon.exe"
@@ -49,3 +49,28 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "stop"; Flags: runhidden waitunti
 
 [InstallDelete]
 Type: files; Name: "{userstartup}\netmon monitor.lnk"
+
+[Code]
+// O monitor roda sem janela, então o Restart Manager não consegue fechá-lo e a
+// cópia do netmon.exe falha com "Access is denied". Encerramos todos os
+// processos netmon.exe antes de instalar e antes de desinstalar.
+procedure KillNetmon();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM netmon.exe /F /T', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  Sleep(1500);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  KillNetmon();
+  Result := '';
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  KillNetmon();
+  Result := True;
+end;
