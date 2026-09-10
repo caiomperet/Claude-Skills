@@ -48,7 +48,7 @@ import urllib.request
 import webbrowser
 
 APP = "netmon"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 FROZEN = getattr(sys, "frozen", False)
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 SYSTEM = platform.system()
@@ -1284,26 +1284,68 @@ def _download(url, dest, timeout_s=120):
             fh.write(chunk)
 
 
+def _env_path(path):
+    """Troca prefixos por variáveis de ambiente para o .cmd não depender de acentos no caminho."""
+    for var in ("LOCALAPPDATA", "TEMP", "USERPROFILE"):
+        base = os.environ.get(var)
+        if base and path.lower().startswith(base.lower().rstrip("\\") + "\\"):
+            return f"%{var}%" + path[len(base.rstrip("\\")):]
+    return path
+
+
+def update_log_path(cfg):
+    return os.path.join(cfg["_dir"], "netmon-update.log")
+
+
 def apply_update(cfg, info):
     """Baixa e instala a versão indicada por check_update(). Encerra o monitor antes.
 
-    Instalado como executável (Windows): baixa o netmon-setup.exe e roda em modo
-    silencioso, reabrindo a interface ao final. Rodando do código: substitui os
-    arquivos .py pela versão da tag e reabre a interface. Retorna a linha de
-    comando que foi disparada; o chamador deve encerrar a interface em seguida.
+    Instalado como executável (Windows): baixa o netmon-setup.exe e deixa um
+    script .cmd que espera esta interface fechar, roda o instalador em modo
+    silêncioso forçando o fechamento de qualquer netmon.exe restante, registra
+    o resultado em netmon-update.log e reabre a interface. Rodando do código:
+    substitui os arquivos .py pela versão da tag e reabre a interface. O
+    chamador deve encerrar a interface logo em seguida.
     """
-    request_stop(cfg)
+    stopped = request_stop(cfg)
+    st = monitor_status(cfg)
+    if IS_WINDOWS and not stopped and st.get("pid"):
+        subprocess.run(["taskkill", "/PID", str(st["pid"]), "/F"], capture_output=True, **_subprocess_flags())
     if FROZEN:
         if not (IS_WINDOWS and info.get("setup_url")):
             raise RuntimeError("Esta release não tem instalador para o seu sistema.")
         import tempfile
         setup = os.path.join(tempfile.gettempdir(), "netmon-setup.exe")
         _download(info["setup_url"], setup)
+        if os.path.getsize(setup) < 1_000_000:
+            raise RuntimeError("Download do instalador incompleto")
         exe = sys.executable
-        script = (f'timeout /t 3 /nobreak >nul & "{setup}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART '
-                  f'/CLOSEAPPLICATIONS & start "" "{exe}" --install')
-        subprocess.Popen(["cmd", "/c", script], creationflags=(getattr(subprocess, "DETACHED_PROCESS", 0)
-                                                                | getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+        ulog = update_log_path(cfg)
+        setup_log = os.path.join(cfg["_dir"], "netmon-setup.log")
+        script = os.path.join(cfg["_dir"], "netmon-update.cmd")
+        pid = os.getpid()
+        lines = [
+            "@echo off",
+            "chcp 65001 >nul",
+            f'echo [%date% %time%] atualizando para {info["version"]}; aguardando a interface (pid {pid}) fechar>> "{_env_path(ulog)}"',
+            ":wait",
+            f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)',
+            f'echo [%date% %time%] executando o instalador>> "{_env_path(ulog)}"',
+            f'"{_env_path(setup)}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /FORCECLOSEAPPLICATIONS '
+            f'/LOG="{_env_path(setup_log)}"',
+            f'echo [%date% %time%] instalador terminou com codigo %ERRORLEVEL%>> "{_env_path(ulog)}"',
+            f'start "" "{_env_path(exe)}" --install',
+        ]
+        with open(script, "w", encoding="utf-8", newline="\r\n") as fh:
+            fh.write("\n".join(lines) + "\n")
+        with open(ulog, "a", encoding="utf-8") as fh:
+            fh.write(f"[{dt.datetime.now():%Y-%m-%d %H:%M:%S}] instalador baixado em {setup} "
+                     f"({os.path.getsize(setup) / 1e6:.1f} MB); monitor parado={stopped}\n")
+        # CREATE_NO_WINDOW dá ao cmd um console invisível (tasklist, find e ping
+        # precisam de um); o processo sobrevive ao fechamento desta interface.
+        subprocess.Popen(["cmd", "/c", script], cwd=cfg["_dir"], close_fds=True,
+                         creationflags=(getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                                        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)))
         return script
     base = f"https://raw.githubusercontent.com/{info['repo']}/{info['tag']}/netmon/"
     staged = []
@@ -1313,8 +1355,7 @@ def apply_update(cfg, info):
         staged.append((tmp, os.path.join(BASE_DIR, name)))
     for tmp, final in staged:
         os.replace(tmp, final)
-    cmd = monitor_command(cfg)[:-3] if not FROZEN else [sys.executable]
-    cmd = [cmd[0], os.path.join(BASE_DIR, "netmon_gui.py"), "--install"]
+    cmd = [monitor_command(cfg)[0], os.path.join(BASE_DIR, "netmon_gui.py"), "--install"]
     kwargs = {"close_fds": True}
     if IS_WINDOWS:
         kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -1322,6 +1363,18 @@ def apply_update(cfg, info):
         kwargs["start_new_session"] = True
     subprocess.Popen(cmd, **kwargs)
     return " ".join(cmd)
+
+
+def last_update_failure(cfg, max_age_s=86400):
+    """Se houve tentativa de atualização recente e ainda estamos na versão antiga, devolve o log."""
+    ulog = update_log_path(cfg)
+    try:
+        if time.time() - os.path.getmtime(ulog) > max_age_s:
+            return None
+        with open(ulog, encoding="utf-8", errors="replace") as fh:
+            return fh.read().strip().splitlines()[-4:]
+    except OSError:
+        return None
 
 
 # --------------------------------------------------------------------------

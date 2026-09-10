@@ -910,7 +910,12 @@ class App:
         v = self.update_info["version"]
         self.btn_update.config(text=f"Atualizar para {v}")
         self.btn_update.pack(side="right", padx=(6, 0))
-        self.msg_var.set(f"Nova versão {v} disponível. Clique em \"Atualizar para {v}\" para instalar.")
+        failed = netmon.last_update_failure(self.cfg)
+        if failed:
+            self.msg_var.set(f"A última tentativa de atualizar não concluiu ({failed[-1]}). Tente de novo ou "
+                             f"execute o netmon-setup.exe da release; detalhes em netmon-update.log na pasta de dados.")
+        else:
+            self.msg_var.set(f"Nova versão {v} disponível. Clique em \"Atualizar para {v}\" para instalar.")
 
     def do_update(self):
         info = self.update_info
@@ -923,7 +928,7 @@ class App:
         self.btn_update.state(["disabled"])
 
         def done(_):
-            self.root.after(500, self.root.destroy)
+            self.root.destroy()
 
         self._run_bg(lambda: netmon.apply_update(self.cfg, info), done)
 
