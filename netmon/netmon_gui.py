@@ -524,13 +524,13 @@ class App:
             ttk.Style().theme_use("vista" if netmon.IS_WINDOWS else "clam")
         except tk.TclError:
             pass
-        # Botões não recebem foco de teclado, para a barra de espaço não acioná-los
-        root.option_add("*TButton.takeFocus", 0)
-        root.option_add("*TCheckbutton.takeFocus", 0)
-        root.option_add("*Checkbutton.takeFocus", 0)
         self._build()
+        # Botões e caixas de seleção não podem receber foco de teclado, senão a
+        # barra de espaço os aciona em vez de marcar. option_add não vale para
+        # widgets ttk, então ajustamos widget a widget.
+        self._disable_focus(root)
         root.bind_all("<space>", self._on_space)
-        root.bind("<FocusIn>", lambda e: None)
+        root.after(200, lambda: root.focus_set())
         self._ensure_running(auto=True)
         self._tick_status()
         self._tick_data()
@@ -563,7 +563,6 @@ class App:
         self.btn_toggle.pack(side="right")
         self.btn_call = ttk.Button(top, text="Ligar modo chamada", command=self.toggle_call)
         self.btn_call.pack(side="right", padx=6)
-        ttk.Button(top, text="Marcar travamento (espaço)", command=self.mark_now).pack(side="left", padx=(14, 0))
         ttk.Button(top, text="Testar velocidade", command=self.test_now).pack(side="right", padx=6)
 
         tiles = ttk.LabelFrame(panel, text="Agora")
@@ -580,6 +579,23 @@ class App:
             s = ttk.Label(f, text="", foreground="#6b7280", font=("", 8))
             s.pack(anchor="w")
             self.tiles[key] = (v, s)
+
+        marksf = ttk.LabelFrame(panel, text="Travamentos que você marcou")
+        marksf.pack(fill="x", **pad)
+        mrow = ttk.Frame(marksf)
+        mrow.pack(fill="x", padx=10, pady=(8, 2))
+        self.btn_mark = ttk.Button(mrow, text="Marcar travamento agora  (barra de espaço)", command=self.mark_now)
+        self.btn_mark.pack(side="left")
+        self.mark_var = tk.StringVar(value="nenhuma marcação hoje")
+        ttk.Label(mrow, textvariable=self.mark_var, foreground="#6b7280").pack(side="left", padx=12)
+        self.marks_tree = ttk.Treeview(marksf, columns=("hora", "o"), show="headings", height=4)
+        self.marks_tree.heading("hora", text="Quando")
+        self.marks_tree.heading("o", text="O que o monitor viu nesse instante")
+        self.marks_tree.column("hora", width=120, stretch=False, anchor="w")
+        self.marks_tree.column("o", width=700, anchor="w")
+        for tag, color in (("critico", "#b91c1c"), ("atencao", "#b45309"), ("ok", "#166534")):
+            self.marks_tree.tag_configure(tag, foreground=color)
+        self.marks_tree.pack(fill="x", padx=10, pady=(2, 10))
 
         summ = ttk.LabelFrame(panel, text="Últimos 7 dias")
         summ.pack(fill="x", **pad)
@@ -644,7 +660,7 @@ class App:
 
         logf = ttk.LabelFrame(panel, text="Registro")
         logf.pack(fill="both", expand=True, **pad)
-        self.log = tk.Text(logf, height=7, font=("Consolas" if netmon.IS_WINDOWS else "TkFixedFont", 8),
+        self.log = tk.Text(logf, height=6, font=("Consolas" if netmon.IS_WINDOWS else "TkFixedFont", 8),
                            state="disabled", wrap="none", relief="flat", background="#f9fafb")
         self.log.pack(fill="both", expand=True, padx=6, pady=6)
 
@@ -726,23 +742,64 @@ class App:
             self.msg_var.set("Monitor iniciado.")
         self.root.after(1500, lambda: self._tick_status(reschedule=False))
 
+    def _disable_focus(self, widget):
+        for child in widget.winfo_children():
+            if child.winfo_class() in ("TButton", "Button", "TCheckbutton", "Checkbutton", "TNotebook",
+                                       "Treeview", "TRadiobutton", "Canvas"):
+                try:
+                    child.configure(takefocus=False)
+                except tk.TclError:
+                    pass
+            self._disable_focus(child)
+
     def _on_space(self, event):
         w = self.root.focus_get()
         cls = w.winfo_class() if w is not None else ""
-        if cls in ("Entry", "TEntry", "Spinbox", "TSpinbox", "TCombobox", "Text"):
+        if cls in ("Entry", "TEntry", "Spinbox", "TSpinbox", "TCombobox"):
             return None
+        if cls == "Text":
+            try:
+                if str(w.cget("state")) == "normal":
+                    return None
+            except tk.TclError:
+                pass
         self.mark_now()
         return "break"
 
     def mark_now(self):
-        ts = netmon.add_mark(self.store)
+        try:
+            ts = netmon.add_mark(self.store)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("netmon", f"Não consegui gravar a marcação: {exc}\n\n"
+                                           f"Banco: {self.cfg['db_path']}")
+            return
         when = dt.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
         st = netmon.monitor_status(self.cfg)
-        hint = "" if st.get("call_mode") else " Modo chamada está desligado: ligue-o para medir a duração."
+        hint = "" if st.get("call_mode") else "  Ligue o modo chamada para medir a duração."
         self.msg_var.set(f"Travamento marcado às {when}.{hint}")
+        self.btn_mark.config(text=f"Marcado às {when}")
+        self.root.after(4000, lambda: self.btn_mark.config(
+            text="Marcar travamento agora  (barra de espaço)"))
         self._flash()
+        self._refresh_marks()
         if self.nb.index("current") == 1:
             self.chart.reload()
+
+    def _refresh_marks(self):
+        rows = self.store.query("SELECT ts, note FROM marks ORDER BY ts DESC LIMIT 8")
+        self.marks_tree.delete(*self.marks_tree.get_children())
+        for r in rows:
+            level, text = netmon.explain_mark(self.store, r["ts"])
+            when = dt.datetime.fromtimestamp(r["ts"]).strftime("%d/%m %H:%M:%S")
+            self.marks_tree.insert("", "end", values=(when, text), tags=(level,))
+        today0 = dt.datetime.combine(dt.date.today(), dt.time.min).timestamp()
+        today = [r for r in rows if r["ts"] >= today0]
+        total = self.store.query("SELECT COUNT(*) AS n FROM marks WHERE ts >= ?", (today0,))[0]["n"]
+        if total:
+            last = dt.datetime.fromtimestamp(today[0]["ts"]).strftime("%H:%M:%S") if today else ""
+            self.mark_var.set(f"{total} hoje, a última às {last}")
+        else:
+            self.mark_var.set("nenhuma marcação hoje")
 
     def _flash(self, times=2):
         orig = self.dot.itemcget(self.dot_id, "fill")
@@ -873,6 +930,7 @@ class App:
     def _tick_data(self):
         try:
             self._refresh_tiles()
+            self._refresh_marks()
         except Exception as exc:  # noqa: BLE001
             self.msg_var.set(f"Erro ao ler dados: {exc}")
         self.root.after(15000, self._tick_data)

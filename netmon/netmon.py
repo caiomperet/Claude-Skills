@@ -48,7 +48,7 @@ import urllib.request
 import webbrowser
 
 APP = "netmon"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 FROZEN = getattr(sys, "frozen", False)
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 SYSTEM = platform.system()
@@ -2245,6 +2245,19 @@ def cmd_mark(args, cfg):
     store.close()
 
 
+def cmd_marks(args, cfg):
+    store = Store(cfg["db_path"])
+    rows = store.query("SELECT ts, note FROM marks WHERE ts >= ? ORDER BY ts",
+                       (time.time() - args.days * 86400,))
+    if not rows:
+        print(f"nenhuma marcação nos últimos {args.days:g} dias (banco: {cfg['db_path']})")
+    for r in rows:
+        _, text = explain_mark(store, r["ts"])
+        note = f"  [{r['note']}]" if r["note"] else ""
+        print(f"{dt.datetime.fromtimestamp(r['ts']).strftime('%d/%m %H:%M:%S')}{note}  {text}")
+    store.close()
+
+
 def cmd_call(args, cfg):
     request_call_mode(cfg, args.state == "on")
     print("modo chamada " + ("ligado" if args.state == "on" else "desligado") + " (pedido enviado ao monitor)")
@@ -2273,6 +2286,8 @@ def main(argv=None):
     p.add_argument("state", choices=["on", "off"])
     p = sub.add_parser("mark", help="grava uma marcação de travamento agora")
     p.add_argument("note", nargs="*")
+    p = sub.add_parser("marks", help="lista as marcações e o que o monitor viu em cada uma")
+    p.add_argument("--days", type=float, default=7)
     sub.add_parser("once", help="executa todas as medições uma vez e mostra o resultado")
     p = sub.add_parser("summary", help="resumo em texto")
     p.add_argument("--days", type=float, default=7)
@@ -2288,7 +2303,7 @@ def main(argv=None):
     cfg = load_config(args.config)
     {"run": cmd_run, "once": cmd_once, "summary": cmd_summary, "report": cmd_report,
      "export": cmd_export, "start": cmd_start, "stop": cmd_stop, "status": cmd_status,
-     "call": cmd_call, "mark": cmd_mark}[args.cmd](args, cfg)
+     "call": cmd_call, "mark": cmd_mark, "marks": cmd_marks}[args.cmd](args, cfg)
 
 
 if __name__ == "__main__":
