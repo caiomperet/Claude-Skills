@@ -105,6 +105,17 @@ satura a conexão por cerca de um segundo e pode ele mesmo travar uma chamada
 em outro computador da casa. As rajadas aparecem no gráfico de histórico como
 "Travamentos", no relatório e no resumo.
 
+**Marcar um travamento.** Com a janela do netmon em primeiro plano, aperte a
+barra de espaço no momento em que a reunião travar (ou clique em "Marcar
+travamento"). A marcação é gravada com hora exata e aparece como linha
+vertical no gráfico de histórico. No relatório e no resumo, cada marcação vem
+com o que o monitor viu naquele instante: uma rajada de perda no ping por
+segundo (e se o roteador também falhou, o que aponta para a rede local), perda
+ou latência na medição por minuto, ou nada anormal, caso em que o travamento
+veio de outro lugar (o computador da chamada, o Wi-Fi dele, a VPN ou o serviço
+de reunião). A tecla não interfere ao digitar nos campos de configuração. Pela
+linha de comando, `python netmon.py mark`.
+
 Se o computador que monitora não é o mesmo das chamadas, ligue-o à rede do
 mesmo jeito (Wi-Fi ou cabo, e na mesma banda de Wi-Fi) para que a medição até
 o roteador represente o caminho que a chamada usa.

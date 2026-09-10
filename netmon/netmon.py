@@ -48,7 +48,7 @@ import urllib.request
 import webbrowser
 
 APP = "netmon"
-VERSION = "1.3.2"
+VERSION = "1.4.0"
 FROZEN = getattr(sys, "frozen", False)
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 SYSTEM = platform.system()
@@ -282,6 +282,12 @@ CREATE TABLE IF NOT EXISTS call_burst (
     lost INTEGER
 );
 CREATE INDEX IF NOT EXISTS call_burst_ts ON call_burst(ts);
+CREATE TABLE IF NOT EXISTS marks (
+    id INTEGER PRIMARY KEY,
+    ts REAL NOT NULL,
+    note TEXT
+);
+CREATE INDEX IF NOT EXISTS marks_ts ON marks(ts);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY,
     ts REAL NOT NULL,
@@ -1381,6 +1387,53 @@ def last_update_failure(cfg, max_age_s=86400):
 # Estatística e relatório
 # --------------------------------------------------------------------------
 
+def add_mark(store, note="", ts=None):
+    ts = ts or time.time()
+    store.insert("marks", {"ts": ts, "note": note or ""})
+    return ts
+
+
+def explain_mark(store, ts, window_s=120, burst_before_s=90, burst_after_s=15):
+    """O que o monitor viu ao redor de uma marcação. Retorna (nível, texto).
+
+    Rajadas contam se começaram até 90 s antes da tecla (o travamento estava
+    acontecendo) ou até 15 s depois (a tecla veio no começo dele)."""
+    bursts = store.query("SELECT ts, duration_s, kind FROM call_burst WHERE ts BETWEEN ? AND ? ORDER BY ts",
+                         (ts - burst_before_s, ts + burst_after_s))
+    inet = [b for b in bursts if b["kind"] == "internet"]
+    gw = [b for b in bursts if b["kind"] == "gateway"]
+    if inet:
+        nearest = min(inet, key=lambda b: abs(b["ts"] - ts))
+        delta = nearest["ts"] - ts
+        when = ("no mesmo instante" if abs(delta) < 3 else
+                f"{abs(delta):.0f} s {'antes' if delta < 0 else 'depois'}")
+        local = " O roteador também falhou: origem na rede local." if gw else " Roteador respondeu: origem no provedor."
+        return ("critico", f"Rajada de {nearest['duration_s']:.0f} s sem resposta {when}." + local)
+    pings = store.query("SELECT cycle, kind, loss_pct, rtt_avg, received, jitter, during_speed FROM ping "
+                        "WHERE ts BETWEEN ? AND ?", (ts - window_s, ts + window_s + 30))
+    cycles = aggregate_cycles(pings)
+    lossy = [c for c in cycles if c["loss"] > 0]
+    gw_lossy = [c for c in cycles if (c["gw_loss"] or 0) > 0]
+    call_on = store.query("SELECT COUNT(*) AS n FROM call_minute WHERE ts BETWEEN ? AND ?",
+                          (ts - window_s, ts + window_s))[0]["n"] > 0
+    if lossy:
+        worst = max(lossy, key=lambda c: c["loss"])
+        local = " Também até o roteador." if gw_lossy else " Roteador limpo."
+        return ("atencao", f"Perda de {worst['loss']:.0f}% no ciclo de {fmt_ts(worst['ts'], False)} "
+                           f"(medição por minuto).{local}")
+    rtts = [c["rtt"] for c in cycles if c["rtt"] is not None]
+    if rtts and max(rtts) > 2.5 * (statistics.median(rtts) or 1):
+        return ("atencao", f"Sem perda, mas latência subiu a {max(rtts):.0f} ms. Possível saturação do upload.")
+    if cycles:
+        base = "Nenhuma perda nem latência anormal nos 2 min ao redor"
+        if not call_on:
+            return ("ok", base + " (modo chamada estava desligado; rajadas curtas podem ter passado). "
+                          "Suspeite do computador da chamada, do Wi-Fi dele ou da VPN.")
+        return ("ok", base + ", nem no ping por segundo. A rede compartilhada estava boa; suspeite do "
+                      "computador da chamada, do Wi-Fi dele ou da VPN.")
+    return ("atencao", "Monitor não tinha medições nesse horário.")
+
+
 def percentile(values, p):
     vals = sorted(v for v in values if v is not None)
     if not vals:
@@ -1565,6 +1618,12 @@ def compute_stats(cfg, store, days):
         "per_hour": 60.0 * len(inet_bursts) / call_minutes if call_minutes else None,
     }
 
+    marks = store.query("SELECT ts, note FROM marks WHERE ts >= ? ORDER BY ts", (start,))
+    st["marks"] = []
+    for m in marks:
+        level, text = explain_mark(store, m["ts"])
+        st["marks"].append({"ts": m["ts"], "note": m["note"], "level": level, "text": text})
+
     dns_ok = [d for d in dns if d["ok"]]
     st["dns"] = {
         "n": len(dns),
@@ -1692,6 +1751,19 @@ def build_verdict(st):
                           + "Cada uma corresponde a um congelamento de vídeo do mesmo tamanho."))
             if not local_problem and call["gw_bursts"] == 0 and call["per_hour"] > 1:
                 isp_unstable = True
+
+    marks = st.get("marks") or []
+    if marks:
+        confirmed = sum(1 for m in marks if m["level"] == "critico")
+        partial = sum(1 for m in marks if m["level"] == "atencao")
+        clean = sum(1 for m in marks if m["level"] == "ok")
+        level = "critico" if confirmed > len(marks) / 2 else ("atencao" if confirmed + partial else "ok")
+        items.append((level, f"{len(marks)} travamentos marcados por você",
+                      f"{confirmed} coincidem com rajadas de perda no ping por segundo, {partial} com perda ou "
+                      f"latência na medição por minuto, {clean} sem nada anormal na rede compartilhada. "
+                      + ("A maioria tem causa na conexão da casa." if confirmed > len(marks) / 2 else
+                         "Quando a rede da casa estava limpa, o travamento veio de outro lugar: computador da "
+                         "chamada, Wi-Fi dele, VPN ou o serviço de reunião.")))
 
     if st["dns"]["n"]:
         if st["dns"]["fail_pct"] > T["dns_fail_pct"]:
@@ -1983,6 +2055,16 @@ def render_html(cfg, st):
             parts.append("<p class='note'>Nenhuma rajada de perda registrada.</p>")
         parts.append("</div>")
 
+    if st.get("marks"):
+        parts.append(f"<h2>Travamentos marcados por você: {len(st['marks'])}</h2><div class='card'>"
+                     "<table><tr><th>Quando</th><th>O que o monitor viu</th></tr>")
+        colors = {"critico": "#dc2626", "atencao": "#f59e0b", "ok": "#16a34a"}
+        for m in st["marks"]:
+            parts.append(f"<tr><td>{dt.datetime.fromtimestamp(m['ts']).strftime('%d/%m %H:%M:%S')}"
+                         + (f"<br><span class='note'>{e(m['note'])}</span>" if m["note"] else "")
+                         + f"</td><td style='border-left:4px solid {colors[m['level']]}'>{e(m['text'])}</td></tr>")
+        parts.append("</table></div>")
+
     if st["worst_cycles"]:
         parts.append("<h2>Piores momentos (fora de quedas totais)</h2><div class='card'><table>"
                      "<tr><th>Quando</th><th>Perda</th><th>Latência</th><th>Jitter</th><th>Perda até o roteador</th></tr>")
@@ -2041,6 +2123,10 @@ def render_text(cfg, st):
     if call.get("minutes"):
         lines.append(f"Modo chamada        {call['minutes'] / 60:.1f} h, {len(call['bursts'])} travamentos, "
                      f"mais longo {call['longest_s']:.0f} s")
+    if st.get("marks"):
+        lines.append(f"Marcações           {len(st['marks'])}")
+        for m in st["marks"][-10:]:
+            lines.append(f"  {dt.datetime.fromtimestamp(m['ts']).strftime('%d/%m %H:%M:%S')}  {m['text']}")
     lines.append("")
     lines.append("Diagnóstico:")
     marks = {"ok": "[ok]  ", "atencao": "[!]   ", "critico": "[!!]  "}
@@ -2121,8 +2207,8 @@ def cmd_report(args, cfg):
 
 
 def cmd_export(args, cfg):
-    if args.table not in ("ping", "dns", "speed", "events", "call_minute", "call_burst"):
-        sys.exit("tabela deve ser ping, dns, speed, events, call_minute ou call_burst")
+    if args.table not in ("ping", "dns", "speed", "events", "call_minute", "call_burst", "marks"):
+        sys.exit("tabela deve ser ping, dns, speed, events, call_minute, call_burst ou marks")
     store = Store(cfg["db_path"])
     start = time.time() - args.days * 86400
     rows = store.query(f"SELECT * FROM {args.table} WHERE ts >= ? ORDER BY ts", (start,))
@@ -2152,6 +2238,13 @@ def cmd_start(args, cfg):
         print(f"monitor iniciado em segundo plano (pid {pid}); log em {cfg['log_path']}")
 
 
+def cmd_mark(args, cfg):
+    store = Store(cfg["db_path"])
+    ts = add_mark(store, " ".join(args.note))
+    print(f"marcação gravada às {dt.datetime.fromtimestamp(ts).strftime('%H:%M:%S')}")
+    store.close()
+
+
 def cmd_call(args, cfg):
     request_call_mode(cfg, args.state == "on")
     print("modo chamada " + ("ligado" if args.state == "on" else "desligado") + " (pedido enviado ao monitor)")
@@ -2178,6 +2271,8 @@ def main(argv=None):
     sub.add_parser("status", help="mostra se o monitor está rodando")
     p = sub.add_parser("call", help="liga ou desliga o modo chamada (ping contínuo)")
     p.add_argument("state", choices=["on", "off"])
+    p = sub.add_parser("mark", help="grava uma marcação de travamento agora")
+    p.add_argument("note", nargs="*")
     sub.add_parser("once", help="executa todas as medições uma vez e mostra o resultado")
     p = sub.add_parser("summary", help="resumo em texto")
     p.add_argument("--days", type=float, default=7)
@@ -2193,7 +2288,7 @@ def main(argv=None):
     cfg = load_config(args.config)
     {"run": cmd_run, "once": cmd_once, "summary": cmd_summary, "report": cmd_report,
      "export": cmd_export, "start": cmd_start, "stop": cmd_stop, "status": cmd_status,
-     "call": cmd_call}[args.cmd](args, cfg)
+     "call": cmd_call, "mark": cmd_mark}[args.cmd](args, cfg)
 
 
 if __name__ == "__main__":

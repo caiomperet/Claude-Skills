@@ -64,11 +64,12 @@ SERIES = [
     ("loss", "Perda de pacotes (%)", "#d62728", "%", "area"),
     ("gw_loss", "Perda até o roteador (%)", "#9467bd", "%", "area"),
     ("dns", "DNS (ms)", "#8c564b", "ms", "line"),
-    ("avail", "Disponibilidade diária (%)", "#16a34a", "%", "bars"),
-    ("call_rtt", "Latência 1/s, modo chamada (ms)", "#0d9488", "ms", "line"),
-    ("bursts", "Travamentos, modo chamada (s)", "#b91c1c", "s", "spikes"),
+    ("avail", "Disponibilidade por dia (%)", "#16a34a", "%", "bars"),
+    ("call_rtt", "Latência 1/s (ms)", "#0d9488", "ms", "line"),
+    ("bursts", "Travamentos (s)", "#b91c1c", "s", "spikes"),
+    ("marks", "Marcações (espaço)", "#7c3aed", "", "overlay"),
 ]
-DEFAULT_SERIES = {"down", "up", "rtt", "loss", "avail", "bursts"}
+DEFAULT_SERIES = {"down", "up", "rtt", "loss", "avail", "bursts", "marks"}
 PERIODS = [("1 dia", 1), ("3 dias", 3), ("7 dias", 7), ("15 dias", 15)]
 DAY = 86400.0
 
@@ -285,6 +286,9 @@ class HistoryChart(ttk.Frame):
                          q("SELECT ts, duration_s, host, kind FROM call_burst WHERE ts BETWEEN ? AND ? ORDER BY ts",
                            (t0, t1))]
 
+        out["marks"] = [(r["ts"], r["note"]) for r in
+                        q("SELECT ts, note FROM marks WHERE ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))]
+
         dns = q("SELECT ts, ms FROM dns WHERE ok=1 AND ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))
         acc = {}
         for r in dns:
@@ -310,11 +314,13 @@ class HistoryChart(ttk.Frame):
         cv = self.canvas
         cv.delete("all")
         self._panels = []
+        self._marks = []
         self.range_var.set(self._fmt_range())
         W, H = cv.winfo_width(), cv.winfo_height()
         if W < 50 or H < 50:
             return
-        active = [s for s in SERIES if self.enabled[s[0]].get()]
+        active = [s for s in SERIES if self.enabled[s[0]].get() and s[4] != "overlay"]
+        show_marks = self.enabled["marks"].get()
         if not active:
             cv.create_text(W / 2, H / 2, text="Selecione ao menos uma variável acima.", fill="#6b7280")
             return
@@ -449,6 +455,14 @@ class HistoryChart(ttk.Frame):
                                  "pts": pts, "color": color, "kind": kind})
             y = bottom + gap
 
+        self._marks = self.data.get("marks", []) if show_marks else []
+        if self._marks and self._panels:
+            top_y, bot_y = self._panels[0]["top"], self._panels[-1]["bottom"]
+            for ts, note in self._marks:
+                x = X(ts)
+                cv.create_line(x, top_y, x, bot_y, fill="#7c3aed", dash=(4, 3), width=1.5)
+                cv.create_polygon(x - 5, top_y - 8, x + 5, top_y - 8, x, top_y, fill="#7c3aed", outline="")
+
     def _hover(self, event):
         cv = self.canvas
         cv.delete("hover")
@@ -461,6 +475,18 @@ class HistoryChart(ttk.Frame):
         t = self.t0 + (event.x - ml) / pw * (self.t1 - self.t0)
         cv.create_line(event.x, self._panels[0]["top"], event.x, self._panels[-1]["bottom"], fill="#9ca3af",
                        dash=(2, 2), tags="hover")
+        if self._marks:
+            near = min(self._marks, key=lambda m: abs(m[0] - t))
+            if abs(near[0] - t) < (self.t1 - self.t0) / 100:
+                txt = "Marcação " + dt.datetime.fromtimestamp(near[0]).strftime("%d/%m %H:%M:%S") + \
+                      (f": {near[1]}" if near[1] else "")
+                tid = cv.create_text(event.x + 10 if event.x < W - 260 else event.x - 10, self._panels[0]["top"] - 4,
+                                     text=txt, anchor="sw" if event.x < W - 260 else "se", fill="#7c3aed",
+                                     font=("", 9, "bold"), tags="hover")
+                bbox = cv.bbox(tid)
+                cv.create_rectangle(bbox[0] - 3, bbox[1] - 2, bbox[2] + 3, bbox[3] + 2, fill="#ffffff",
+                                    outline="#e5e7eb", tags="hover")
+                cv.tag_raise(tid)
         for p in self._panels:
             if not p["pts"]:
                 continue
@@ -492,13 +518,19 @@ class App:
         self.store = netmon.Store(cfg["db_path"])
         self.busy = False
         root.title(f"netmon {netmon.VERSION}: qualidade da internet")
-        root.minsize(780, 660)
+        root.minsize(900, 680)
         self.update_info = None
         try:
             ttk.Style().theme_use("vista" if netmon.IS_WINDOWS else "clam")
         except tk.TclError:
             pass
+        # Botões não recebem foco de teclado, para a barra de espaço não acioná-los
+        root.option_add("*TButton.takeFocus", 0)
+        root.option_add("*TCheckbutton.takeFocus", 0)
+        root.option_add("*Checkbutton.takeFocus", 0)
         self._build()
+        root.bind_all("<space>", self._on_space)
+        root.bind("<FocusIn>", lambda e: None)
         self._ensure_running(auto=True)
         self._tick_status()
         self._tick_data()
@@ -531,7 +563,8 @@ class App:
         self.btn_toggle.pack(side="right")
         self.btn_call = ttk.Button(top, text="Ligar modo chamada", command=self.toggle_call)
         self.btn_call.pack(side="right", padx=6)
-        ttk.Button(top, text="Testar velocidade agora", command=self.test_now).pack(side="right", padx=6)
+        ttk.Button(top, text="Marcar travamento (espaço)", command=self.mark_now).pack(side="left", padx=(14, 0))
+        ttk.Button(top, text="Testar velocidade", command=self.test_now).pack(side="right", padx=6)
 
         tiles = ttk.LabelFrame(panel, text="Agora")
         tiles.pack(fill="x", **pad)
@@ -692,6 +725,33 @@ class App:
             netmon.spawn_monitor(self.cfg)
             self.msg_var.set("Monitor iniciado.")
         self.root.after(1500, lambda: self._tick_status(reschedule=False))
+
+    def _on_space(self, event):
+        w = self.root.focus_get()
+        cls = w.winfo_class() if w is not None else ""
+        if cls in ("Entry", "TEntry", "Spinbox", "TSpinbox", "TCombobox", "Text"):
+            return None
+        self.mark_now()
+        return "break"
+
+    def mark_now(self):
+        ts = netmon.add_mark(self.store)
+        when = dt.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+        st = netmon.monitor_status(self.cfg)
+        hint = "" if st.get("call_mode") else " Modo chamada está desligado: ligue-o para medir a duração."
+        self.msg_var.set(f"Travamento marcado às {when}.{hint}")
+        self._flash()
+        if self.nb.index("current") == 1:
+            self.chart.reload()
+
+    def _flash(self, times=2):
+        orig = self.dot.itemcget(self.dot_id, "fill")
+
+        def blink(n):
+            self.dot.itemconfig(self.dot_id, fill="#7c3aed" if n % 2 == 0 else orig)
+            if n < times * 2:
+                self.root.after(150, lambda: blink(n + 1))
+        blink(0)
 
     def toggle_call(self):
         st = netmon.monitor_status(self.cfg)
@@ -865,8 +925,9 @@ class App:
             down = sum(1 for c in cyc if (c["m"] or 0) == 0)
             avail = 100.0 * (1 - down / len(cyc))
             outs = q("SELECT COUNT(*) AS n FROM events WHERE kind='outage_start' AND ts >= ?", (since,))[0]["n"]
+            marks = q("SELECT COUNT(*) AS n FROM marks WHERE ts >= ?", (since,))[0]["n"]
             v.config(text=f"{avail:.1f}% no ar", foreground="#dc2626" if avail < 99 else "#111827")
-            s.config(text=f"{outs} queda(s), {len(cyc)} ciclos")
+            s.config(text=f"{outs} queda(s), {marks} marcação(ões), {len(cyc)} ciclos")
 
     def _tick_summary(self):
         def work():
