@@ -48,7 +48,7 @@ import urllib.request
 import webbrowser
 
 APP = "netmon"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 FROZEN = getattr(sys, "frozen", False)
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 SYSTEM = platform.system()
@@ -93,6 +93,12 @@ DEFAULT_CONFIG = {
     "log_path": "netmon.log",
     "log_level": "INFO",
     "retention_days": 0,
+    "call_mode": {
+        "schedule": [],
+        "skip_speed": True,
+        "host": "1.1.1.1",
+        "burst_after_s": 2.5,
+    },
     "update": {"repo": "caiomperet/Claude-Skills", "check_on_start": True},
     "plan": {
         "download_mbps": 0,
@@ -255,6 +261,27 @@ CREATE TABLE IF NOT EXISTS speed (
     error TEXT
 );
 CREATE INDEX IF NOT EXISTS speed_ts ON speed(ts);
+CREATE TABLE IF NOT EXISTS call_minute (
+    id INTEGER PRIMARY KEY,
+    ts REAL NOT NULL,
+    host TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    sent INTEGER,
+    received INTEGER,
+    rtt_min REAL,
+    rtt_avg REAL,
+    rtt_max REAL
+);
+CREATE INDEX IF NOT EXISTS call_minute_ts ON call_minute(ts);
+CREATE TABLE IF NOT EXISTS call_burst (
+    id INTEGER PRIMARY KEY,
+    ts REAL NOT NULL,
+    host TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    duration_s REAL,
+    lost INTEGER
+);
+CREATE INDEX IF NOT EXISTS call_burst_ts ON call_burst(ts);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY,
     ts REAL NOT NULL,
@@ -573,7 +600,8 @@ def in_quiet_hours(ranges, now=None):
 def control_paths(cfg):
     d = cfg["_dir"]
     return {"pid": os.path.join(d, "netmon.pid"), "stop": os.path.join(d, "netmon.stop"),
-            "testnow": os.path.join(d, "netmon.testnow")}
+            "testnow": os.path.join(d, "netmon.testnow"), "callon": os.path.join(d, "netmon.callon"),
+            "calloff": os.path.join(d, "netmon.calloff"), "state": os.path.join(d, "netmon.state.json")}
 
 
 def monitor_status(cfg, stale_s=90):
@@ -607,6 +635,208 @@ def request_stop(cfg, wait_s=15):
 def request_speed_test(cfg):
     with open(control_paths(cfg)["testnow"], "w", encoding="utf-8") as fh:
         fh.write(str(time.time()))
+
+
+def request_call_mode(cfg, on):
+    """Liga ou desliga manualmente o modo chamada no monitor em execução."""
+    with open(control_paths(cfg)["callon" if on else "calloff"], "w", encoding="utf-8") as fh:
+        fh.write(str(time.time()))
+
+
+def load_state(cfg):
+    try:
+        with open(control_paths(cfg)["state"], encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(cfg, state):
+    tmp = control_paths(cfg)["state"] + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(state, fh)
+    os.replace(tmp, control_paths(cfg)["state"])
+
+
+WEEKDAYS = {"seg": 0, "ter": 1, "qua": 2, "qui": 3, "sex": 4, "sab": 5, "dom": 6,
+            "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+def parse_schedule_entry(entry):
+    """'seg-sex 09:00-18:00' -> (set de dias, 'HH:MM-HH:MM'). Sem dias = todos."""
+    parts = entry.strip().split()
+    if not parts:
+        return None
+    hours = parts[-1]
+    if not re.fullmatch(r"\d{1,2}:\d{2}-\d{1,2}:\d{2}", hours):
+        raise ValueError(f"horário inválido: {entry!r}")
+    days = set(range(7))
+    if len(parts) > 1:
+        days = set()
+        for token in " ".join(parts[:-1]).lower().replace(",", " ").split():
+            token = token.replace("á", "a")
+            if "-" in token:
+                a, b = token.split("-", 1)
+                if a not in WEEKDAYS or b not in WEEKDAYS:
+                    raise ValueError(f"dia inválido: {token!r}")
+                i, j = WEEKDAYS[a], WEEKDAYS[b]
+                days |= set(range(i, j + 1)) if i <= j else set(range(i, 7)) | set(range(0, j + 1))
+            elif token in WEEKDAYS:
+                days.add(WEEKDAYS[token])
+            else:
+                raise ValueError(f"dia inválido: {token!r}")
+    return days, hours
+
+
+def schedule_active(entries, now=None):
+    now = now or dt.datetime.now()
+    for entry in entries:
+        try:
+            parsed = parse_schedule_entry(entry)
+        except ValueError as exc:
+            log.warning("agenda do modo chamada: %s", exc)
+            continue
+        if not parsed:
+            continue
+        days, hours = parsed
+        # faixa que vira a meia-noite conta para o dia em que começou
+        if now.weekday() in days and in_quiet_hours([hours], now):
+            return True
+        prev = (now - dt.timedelta(days=1)).weekday()
+        a, b = hours.split("-")
+        if a > b and prev in days and in_quiet_hours([hours], now) and now.strftime("%H:%M") < b:
+            return True
+    return False
+
+
+# ---- Modo chamada: ping contínuo, 1 por segundo -----------------------------
+
+def build_continuous_ping_cmd(host):
+    if IS_WINDOWS:
+        return ["ping", "-t", "-w", "1000", host]
+    if IS_MAC:
+        return ["ping", "-i", "1", "-W", "1000", host]
+    return ["ping", "-i", "1", "-W", "1", host]
+
+
+class CallMonitor:
+    """Sonda contínua (1 pacote/s) para cada alvo. Grava um resumo por minuto e
+    uma linha por rajada de perda (intervalo sem resposta maior que burst_after_s)."""
+
+    def __init__(self, cfg, store, targets, method):
+        self.cfg = cfg
+        self.store = store
+        self.targets = targets            # [(host, kind)]
+        self.method = method
+        self.burst_after = float(cfg["call_mode"].get("burst_after_s", 2.5))
+        self.stop = threading.Event()
+        self.lock = threading.Lock()
+        self.procs = []
+        self.threads = []
+        now = time.time()
+        self.state = {h: {"kind": k, "rtts": [], "minute_start": now, "last_reply": None, "started": now,
+                          "burst_start": None, "bursts": 0} for h, k in targets}
+
+    def start(self):
+        for host, _ in self.targets:
+            fn = self._run_icmp if self.method == "icmp" else self._run_tcp
+            th = threading.Thread(target=fn, args=(host,), daemon=True)
+            th.start()
+            self.threads.append(th)
+        th = threading.Thread(target=self._watchdog, daemon=True)
+        th.start()
+        self.threads.append(th)
+
+    def close(self):
+        self.stop.set()
+        for proc in self.procs:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        for th in self.threads:
+            th.join(timeout=3)
+        now = time.time()
+        with self.lock:
+            for host, st in self.state.items():
+                self._flush_minute(host, st, now)
+                if st["burst_start"] is not None:
+                    self._close_burst(host, st, now)
+
+    # ---- coleta ----------------------------------------------------------
+
+    def _reply(self, host, rtt):
+        now = time.time()
+        with self.lock:
+            st = self.state[host]
+            st["rtts"].append(rtt)
+            if st["burst_start"] is not None:
+                self._close_burst(host, st, now)
+            st["last_reply"] = now
+
+    def _run_icmp(self, host):
+        try:
+            proc = subprocess.Popen(build_continuous_ping_cmd(host), stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, errors="replace", bufsize=1,
+                                    **_subprocess_flags())
+        except OSError as exc:
+            log.warning("modo chamada: ping indisponível (%s); usando TCP", exc)
+            return self._run_tcp(host)
+        self.procs.append(proc)
+        for line in proc.stdout:
+            if self.stop.is_set():
+                break
+            if "ttl" in line.lower():
+                m = RTT_RE.search(line)
+                if m:
+                    self._reply(host, float(m.group(1).replace(",", ".")))
+
+    def _run_tcp(self, host):
+        h, port = split_host_port(host, self.cfg["ping"]["tcp_port"])
+        while not self.stop.is_set():
+            t0 = time.perf_counter()
+            try:
+                sock = socket.create_connection((h, port), timeout=1.0)
+                sock.close()
+                self._reply(host, (time.perf_counter() - t0) * 1000.0)
+            except OSError:
+                pass
+            self.stop.wait(max(0.05, 1.0 - (time.perf_counter() - t0)))
+
+    # ---- contabilidade ---------------------------------------------------
+
+    def _watchdog(self):
+        while not self.stop.wait(0.5):
+            now = time.time()
+            with self.lock:
+                for host, st in self.state.items():
+                    ref = st["last_reply"] if st["last_reply"] is not None else st["started"] + 5
+                    if st["burst_start"] is None and now - ref > self.burst_after:
+                        st["burst_start"] = ref + 1.0
+                        log.warning("modo chamada: %s sem resposta desde %s", host, fmt_ts(ref))
+                    if now - st["minute_start"] >= 60:
+                        self._flush_minute(host, st, now)
+
+    def _close_burst(self, host, st, now):
+        duration = max(0.0, now - st["burst_start"])
+        self.store.insert("call_burst", {"ts": st["burst_start"], "host": host, "kind": st["kind"],
+                                         "duration_s": duration, "lost": int(round(duration))})
+        st["bursts"] += 1
+        log.warning("modo chamada: %s voltou após %.1f s sem resposta", host, duration)
+        st["burst_start"] = None
+
+    def _flush_minute(self, host, st, now):
+        elapsed = now - st["minute_start"]
+        if elapsed < 5:
+            return
+        rtts = st["rtts"]
+        self.store.insert("call_minute", {
+            "ts": st["minute_start"], "host": host, "kind": st["kind"],
+            "sent": max(int(round(elapsed)), len(rtts)), "received": len(rtts),
+            "rtt_min": min(rtts) if rtts else None, "rtt_avg": statistics.fmean(rtts) if rtts else None,
+            "rtt_max": max(rtts) if rtts else None})
+        st["rtts"] = []
+        st["minute_start"] = now
 
 
 def monitor_command(cfg):
@@ -725,6 +955,10 @@ class Monitor:
         self.down = False
         self.started = time.time()
         self.paths = control_paths(cfg)
+        self.call = None
+        self.call_reason = None
+        # None segue a agenda; True força ligado; False pausa a agenda até o fim do período atual
+        self.call_manual = load_state(cfg).get("call_manual")
 
     def setup(self):
         pcfg = self.cfg["ping"]
@@ -816,6 +1050,8 @@ class Monitor:
 
     def speed_skip_reason(self):
         scfg = self.cfg["speed"]
+        if self.call is not None and self.cfg["call_mode"].get("skip_speed", True):
+            return "call_mode"
         if in_quiet_hours(scfg.get("quiet_hours", [])):
             return "quiet_hours"
         budget = scfg.get("daily_budget_mb", 0)
@@ -915,6 +1151,7 @@ class Monitor:
             self.stop.set()
             for th in threads:
                 th.join(timeout=5)
+            self._set_call_mode(None)
             self.store.event("stop", "")
             for key in ("pid", "stop"):
                 try:
@@ -927,7 +1164,9 @@ class Monitor:
         tmp = self.paths["pid"] + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({"pid": os.getpid(), "started": self.started, "heartbeat": time.time(),
-                       "gateway": self.gateway, "ping_method": self.ping_method, "version": VERSION}, fh)
+                       "gateway": self.gateway, "ping_method": self.ping_method, "version": VERSION,
+                       "call_mode": self.call is not None, "call_reason": self.call_reason,
+                       "call_manual": self.call_manual}, fh)
         os.replace(tmp, self.paths["pid"])
         self._last_beat = time.time()
 
@@ -961,6 +1200,47 @@ class Monitor:
                 pass
             log.info("teste de velocidade solicitado pela interface")
             self.test_now.set()
+        for key, value in (("callon", True), ("calloff", False)):
+            if os.path.exists(self.paths[key]):
+                try:
+                    os.remove(self.paths[key])
+                except OSError:
+                    pass
+                self.call_manual = value
+                save_state(self.cfg, {"call_manual": value})
+                self._write_heartbeat()
+        self._update_call_mode()
+
+    def _update_call_mode(self):
+        scheduled = schedule_active(self.cfg["call_mode"].get("schedule", []))
+        if self.call_manual is True:
+            wanted = "manual"
+        elif self.call_manual is False:
+            wanted = None
+            if not scheduled:
+                self.call_manual = None
+                save_state(self.cfg, {"call_manual": None})
+        else:
+            wanted = "agenda" if scheduled else None
+        if wanted != self.call_reason:
+            self._set_call_mode(wanted)
+
+    def _set_call_mode(self, reason):
+        if self.call is not None:
+            self.call.close()
+            self.call = None
+            self.store.event("call_mode_off", self.call_reason or "")
+            log.info("modo chamada desligado")
+        self.call_reason = reason
+        if reason:
+            targets = [(self.cfg["call_mode"].get("host") or self.cfg["ping"]["hosts"][0], "internet")]
+            if self.gateway:
+                targets.append((self.gateway, "gateway"))
+            self.call = CallMonitor(self.cfg, self.store, targets, self.ping_method)
+            self.call.start()
+            self.store.event("call_mode_on", reason)
+            log.info("modo chamada ligado (%s): 1 pacote/s para %s", reason, ", ".join(h for h, _ in targets))
+        self._write_heartbeat()
 
 
 # ---- Atualização pelo GitHub Releases --------------------------------------
@@ -1218,6 +1498,20 @@ def compute_stats(cfg, store, days):
             key = (e["detail"] or "").split(":")[0]
             st["speed_skip_reasons"][key] = st["speed_skip_reasons"].get(key, 0) + 1
 
+    bursts = store.query("SELECT * FROM call_burst WHERE ts >= ? ORDER BY ts", (start,))
+    call_minutes = store.query("SELECT COUNT(*) AS n FROM call_minute WHERE kind='internet' AND ts >= ?",
+                               (start,))[0]["n"]
+    inet_bursts = [b for b in bursts if b["kind"] == "internet"]
+    gw_bursts = [b for b in bursts if b["kind"] == "gateway"]
+    st["call"] = {
+        "minutes": call_minutes,
+        "bursts": inet_bursts,
+        "gw_bursts": len(gw_bursts),
+        "total_s": sum(b["duration_s"] or 0 for b in inet_bursts),
+        "longest_s": max((b["duration_s"] or 0 for b in inet_bursts), default=0),
+        "per_hour": 60.0 * len(inet_bursts) / call_minutes if call_minutes else None,
+    }
+
     dns_ok = [d for d in dns if d["ok"]]
     st["dns"] = {
         "n": len(dns),
@@ -1327,6 +1621,24 @@ def build_verdict(st):
             level = "atencao" if spread > 0.6 else "ok"
             items.append((level, f"{label} " + ("oscila bastante" if level == "atencao" else "consistente"),
                           f"{base}. Informe plan.{direction}_mbps no config.json para comparar com o contratado."))
+
+    call = st.get("call") or {}
+    if call.get("minutes"):
+        n = len(call["bursts"])
+        hours = call["minutes"] / 60.0
+        if n == 0:
+            items.append(("ok", "Modo chamada sem travamentos",
+                          f"{hours:.1f} h de ping contínuo sem nenhuma rajada de perda."))
+        else:
+            level = "critico" if call["per_hour"] > 1 else "atencao"
+            items.append((level, "Travamentos detectados no modo chamada",
+                          f"{n} rajadas de perda em {hours:.1f} h de ping contínuo ({call['per_hour']:.1f} por hora), "
+                          f"a mais longa de {call['longest_s']:.0f} s, {call['total_s']:.0f} s no total. "
+                          + (f"{call['gw_bursts']} delas também até o roteador (rede local). "
+                             if call["gw_bursts"] else "Nenhuma até o roteador: origem no provedor. ")
+                          + "Cada uma corresponde a um congelamento de vídeo do mesmo tamanho."))
+            if not local_problem and call["gw_bursts"] == 0 and call["per_hour"] > 1:
+                isp_unstable = True
 
     if st["dns"]["n"]:
         if st["dns"]["fail_pct"] > T["dns_fail_pct"]:
@@ -1604,6 +1916,20 @@ def render_html(cfg, st):
                          f"<td class='mono'>{fmt_minutes(o['minutes'])}</td></tr>")
         parts.append("</table></div>")
 
+    call = st.get("call") or {}
+    if call.get("minutes"):
+        parts.append(f"<h2>Modo chamada: {call['minutes'] / 60:.1f} h de ping contínuo, "
+                     f"{len(call['bursts'])} travamentos</h2><div class='card'>")
+        if call["bursts"]:
+            parts.append("<table><tr><th>Início</th><th>Duração</th><th>Alvo</th></tr>")
+            for b in call["bursts"][-40:]:
+                parts.append(f"<tr><td>{fmt_ts(b['ts'])}</td><td class='mono'>{b['duration_s']:.1f} s</td>"
+                             f"<td>{e(b['host'])}</td></tr>")
+            parts.append("</table>")
+        else:
+            parts.append("<p class='note'>Nenhuma rajada de perda registrada.</p>")
+        parts.append("</div>")
+
     if st["worst_cycles"]:
         parts.append("<h2>Piores momentos (fora de quedas totais)</h2><div class='card'><table>"
                      "<tr><th>Quando</th><th>Perda</th><th>Latência</th><th>Jitter</th><th>Perda até o roteador</th></tr>")
@@ -1658,6 +1984,10 @@ def render_text(cfg, st):
     if st["gateway"]:
         lines.append(f"Roteador            perda {fmt_num(st['gateway']['loss_avg'], 2, '%')}  latência p95 "
                      f"{fmt_num(st['gateway']['rtt_p95'], 0, ' ms')}")
+    call = st.get("call") or {}
+    if call.get("minutes"):
+        lines.append(f"Modo chamada        {call['minutes'] / 60:.1f} h, {len(call['bursts'])} travamentos, "
+                     f"mais longo {call['longest_s']:.0f} s")
     lines.append("")
     lines.append("Diagnóstico:")
     marks = {"ok": "[ok]  ", "atencao": "[!]   ", "critico": "[!!]  "}
@@ -1738,8 +2068,8 @@ def cmd_report(args, cfg):
 
 
 def cmd_export(args, cfg):
-    if args.table not in ("ping", "dns", "speed", "events"):
-        sys.exit("tabela deve ser ping, dns, speed ou events")
+    if args.table not in ("ping", "dns", "speed", "events", "call_minute", "call_burst"):
+        sys.exit("tabela deve ser ping, dns, speed, events, call_minute ou call_burst")
     store = Store(cfg["db_path"])
     start = time.time() - args.days * 86400
     rows = store.query(f"SELECT * FROM {args.table} WHERE ts >= ? ORDER BY ts", (start,))
@@ -1769,11 +2099,17 @@ def cmd_start(args, cfg):
         print(f"monitor iniciado em segundo plano (pid {pid}); log em {cfg['log_path']}")
 
 
+def cmd_call(args, cfg):
+    request_call_mode(cfg, args.state == "on")
+    print("modo chamada " + ("ligado" if args.state == "on" else "desligado") + " (pedido enviado ao monitor)")
+
+
 def cmd_status(args, cfg):
     st = monitor_status(cfg)
     if st["running"]:
         print(f"rodando: pid {st['pid']}, desde {fmt_ts(st['started'])}, gateway {st.get('gateway')}, "
-              f"ping {st.get('ping_method')}")
+              f"ping {st.get('ping_method')}, modo chamada "
+              + (f"ligado ({st.get('call_reason')})" if st.get("call_mode") else "desligado"))
     else:
         print("parado")
 
@@ -1787,6 +2123,8 @@ def main(argv=None):
     sub.add_parser("start", help="inicia o monitor em segundo plano")
     sub.add_parser("stop", help="para o monitor em segundo plano")
     sub.add_parser("status", help="mostra se o monitor está rodando")
+    p = sub.add_parser("call", help="liga ou desliga o modo chamada (ping contínuo)")
+    p.add_argument("state", choices=["on", "off"])
     sub.add_parser("once", help="executa todas as medições uma vez e mostra o resultado")
     p = sub.add_parser("summary", help="resumo em texto")
     p.add_argument("--days", type=float, default=7)
@@ -1795,13 +2133,14 @@ def main(argv=None):
     p.add_argument("--out", help="arquivo de saída (padrão: report.html ao lado do banco)")
     p.add_argument("--open", action="store_true", help="abre no navegador")
     p = sub.add_parser("export", help="exporta uma tabela para CSV")
-    p.add_argument("--table", default="speed", help="ping, dns, speed ou events")
+    p.add_argument("--table", default="speed", help="ping, dns, speed, events, call_minute ou call_burst")
     p.add_argument("--days", type=float, default=30)
     p.add_argument("--out")
     args = ap.parse_args(argv)
     cfg = load_config(args.config)
     {"run": cmd_run, "once": cmd_once, "summary": cmd_summary, "report": cmd_report,
-     "export": cmd_export, "start": cmd_start, "stop": cmd_stop, "status": cmd_status}[args.cmd](args, cfg)
+     "export": cmd_export, "start": cmd_start, "stop": cmd_stop, "status": cmd_status,
+     "call": cmd_call}[args.cmd](args, cfg)
 
 
 if __name__ == "__main__":

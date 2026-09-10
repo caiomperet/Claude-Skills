@@ -65,8 +65,10 @@ SERIES = [
     ("gw_loss", "Perda até o roteador (%)", "#9467bd", "%", "area"),
     ("dns", "DNS (ms)", "#8c564b", "ms", "line"),
     ("avail", "Disponibilidade diária (%)", "#16a34a", "%", "bars"),
+    ("call_rtt", "Latência 1/s, modo chamada (ms)", "#0d9488", "ms", "line"),
+    ("bursts", "Travamentos, modo chamada (s)", "#b91c1c", "s", "spikes"),
 ]
-DEFAULT_SERIES = {"down", "up", "rtt", "loss", "avail"}
+DEFAULT_SERIES = {"down", "up", "rtt", "loss", "avail", "bursts"}
 PERIODS = [("1 dia", 1), ("3 dias", 3), ("7 dias", 7), ("15 dias", 15)]
 DAY = 86400.0
 
@@ -273,6 +275,16 @@ class HistoryChart(ttk.Frame):
         out["avail"] = [(dt.datetime.combine(d, dt.time.min).timestamp(), 100.0 * (1 - dn / tot), tot)
                         for d, (tot, dn) in sorted(by_day.items()) if tot]
 
+        cm = q("SELECT ts, rtt_avg FROM call_minute WHERE kind='internet' AND rtt_avg IS NOT NULL "
+               "AND ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))
+        acc = {}
+        for r in cm:
+            acc.setdefault(int((r["ts"] - t0) / bucket_s), []).append(r["rtt_avg"])
+        out["call_rtt"] = [(t0 + (b + 0.5) * bucket_s, max(v)) for b, v in sorted(acc.items())]
+        out["bursts"] = [(r["ts"], r["duration_s"] or 0, r["host"], r["kind"]) for r in
+                         q("SELECT ts, duration_s, host, kind FROM call_burst WHERE ts BETWEEN ? AND ? ORDER BY ts",
+                           (t0, t1))]
+
         dns = q("SELECT ts, ms FROM dns WHERE ok=1 AND ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))
         acc = {}
         for r in dns:
@@ -349,7 +361,11 @@ class HistoryChart(ttk.Frame):
             vals = [p[1] for p in pts]
             top = y + title_h
             bottom = top + ph
-            if kind == "bars":
+            if kind == "spikes":
+                y_min, y_max = 0.0, nice_max(max(vals) if vals else 5)
+                if y_max < 5:
+                    y_max = 5.0
+            elif kind == "bars":
                 lo = min(vals) if vals else 90
                 y_min = 0 if lo < 50 else min(90.0, float(int(lo)))
                 y_max = 100.0
@@ -364,7 +380,7 @@ class HistoryChart(ttk.Frame):
                 return bottom - (min(max(v, y_min), y_min + rng) - y_min) / rng * (bottom - top)
 
             stats = ""
-            if vals:
+            if vals and kind != "spikes":
                 stats = (f"   mín {min(vals):.1f}   mediana {statistics.median(vals):.1f}   máx {max(vals):.1f} {unit}"
                          if kind != "bars" else f"   média {statistics.fmean(vals):.2f}%")
             cv.create_text(ml, y + 3, text=label + stats, anchor="nw", fill=color, font=("", 9, "bold"))
@@ -376,7 +392,21 @@ class HistoryChart(ttk.Frame):
                 cv.create_text(ml - 6, yy, text=f"{v:g}", anchor="e", fill="#6b7280", font=("", 8))
             cv.create_text(ml - 6, top - 1, text=f"{y_max:g}", anchor="e", fill="#6b7280", font=("", 8))
 
-            if kind == "bars":
+            if kind == "spikes":
+                inet = [p for p in pts if p[3] == "internet"]
+                if not inet and pts:
+                    inet = pts
+                stats_txt = (f"   {len(inet)} travamentos, total {sum(p[1] for p in inet):.0f} s, "
+                             f"mais longo {max((p[1] for p in inet), default=0):.0f} s") if pts else "   nenhum no período"
+                cv.create_rectangle(ml, y, ml + 420, y + title_h, fill="#ffffff", outline="")
+                cv.create_text(ml, y + 3, text=label + stats_txt, anchor="nw", fill=color, font=("", 9, "bold"))
+                for ts, v, host, k in pts:
+                    x = X(ts)
+                    col = color if k == "internet" else "#9467bd"
+                    cv.create_line(x, bottom, x, Y(v), fill=col, width=2)
+                    cv.create_oval(x - 2.5, Y(v) - 2.5, x + 2.5, Y(v) + 2.5, fill=col, outline="")
+                pts = [(ts, v) for ts, v, _, _ in pts]
+            elif kind == "bars":
                 for ts, v, n in pts:
                     x1, x2 = max(ml, X(ts)), min(ml + pw, X(ts + DAY))
                     if x2 <= x1:
@@ -499,16 +529,18 @@ class App:
         ttk.Label(top, textvariable=self.status_var, font=("", 11, "bold")).pack(side="left", padx=8)
         self.btn_toggle = ttk.Button(top, text="Parar", command=self.toggle)
         self.btn_toggle.pack(side="right")
+        self.btn_call = ttk.Button(top, text="Ligar modo chamada", command=self.toggle_call)
+        self.btn_call.pack(side="right", padx=6)
         ttk.Button(top, text="Testar velocidade agora", command=self.test_now).pack(side="right", padx=6)
 
         tiles = ttk.LabelFrame(panel, text="Agora")
         tiles.pack(fill="x", **pad)
         self.tiles = {}
-        for col, (key, title) in enumerate([("ping", "Internet"), ("gw", "Roteador"), ("down", "Download"),
-                                            ("up", "Upload"), ("today", "Últimas 24 h")]):
-            f = ttk.Frame(tiles, padding=(10, 6))
-            f.grid(row=0, column=col, sticky="nsew")
-            tiles.columnconfigure(col, weight=1)
+        for i, (key, title) in enumerate([("ping", "Internet"), ("gw", "Roteador"), ("today", "Últimas 24 h"),
+                                          ("down", "Download"), ("up", "Upload"), ("call", "Modo chamada")]):
+            f = ttk.Frame(tiles, padding=(10, 4))
+            f.grid(row=i // 3, column=i % 3, sticky="nsew")
+            tiles.columnconfigure(i % 3, weight=1)
             ttk.Label(f, text=title.upper(), foreground="#6b7280", font=("", 8)).pack(anchor="w")
             v = ttk.Label(f, text="-", font=("", 14, "bold"))
             v.pack(anchor="w")
@@ -557,15 +589,24 @@ class App:
         ttk.Label(g, text="ex.: 09:00-12:00, 14:00-18:00 (horários de reunião; pings continuam)",
                   foreground="#6b7280", font=("", 8)).grid(row=3, column=1, columnspan=4, sticky="w", padx=(6, 2))
 
+        ttk.Label(g, text="Modo chamada automático").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        self.call_sched = ttk.Entry(g, width=34)
+        self.call_sched.grid(row=4, column=1, columnspan=4, sticky="w", padx=(6, 2), pady=(6, 0))
+        ttk.Label(g, text="ex.: seg-sex 08:00-18:00 (ping 1/s e sem teste de velocidade nesses horários)",
+                  foreground="#6b7280", font=("", 8)).grid(row=5, column=1, columnspan=4, sticky="w", padx=(6, 2))
+        self.call_skip_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(g, text="Suspender testes de velocidade durante o modo chamada",
+                        variable=self.call_skip_var).grid(row=6, column=0, columnspan=4, sticky="w", pady=(6, 0))
+
         self.autostart_var = tk.BooleanVar(value=netmon.autostart_enabled())
         cb = ttk.Checkbutton(g, text="Iniciar o monitor junto com o Windows", variable=self.autostart_var)
-        cb.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        cb.grid(row=7, column=0, columnspan=3, sticky="w", pady=(6, 0))
         if not netmon.IS_WINDOWS:
             cb.state(["disabled"])
-        ttk.Button(g, text="Salvar", command=self.save).grid(row=4, column=3, columnspan=2, sticky="e", pady=(8, 0))
+        ttk.Button(g, text="Salvar", command=self.save).grid(row=7, column=3, columnspan=2, sticky="e", pady=(6, 0))
         self.budget_var = tk.StringVar()
         ttk.Label(g, textvariable=self.budget_var, foreground="#6b7280", font=("", 8)).grid(
-            row=5, column=0, columnspan=5, sticky="w", pady=(6, 0))
+            row=8, column=0, columnspan=5, sticky="w", pady=(6, 0))
         self._load_settings()
 
         logf = ttk.LabelFrame(panel, text="Registro")
@@ -590,6 +631,9 @@ class App:
         self.size.set(names[0] if names else SIZE_PRESETS[1][0])
         self.quiet.delete(0, "end")
         self.quiet.insert(0, ", ".join(c["speed"].get("quiet_hours", [])))
+        self.call_sched.delete(0, "end")
+        self.call_sched.insert(0, ", ".join(c["call_mode"].get("schedule", [])))
+        self.call_skip_var.set(bool(c["call_mode"].get("skip_speed", True)))
         self._update_budget_label()
 
     def _update_budget_label(self):
@@ -649,6 +693,15 @@ class App:
             self.msg_var.set("Monitor iniciado.")
         self.root.after(1500, lambda: self._tick_status(reschedule=False))
 
+    def toggle_call(self):
+        st = netmon.monitor_status(self.cfg)
+        on = not st.get("call_mode")
+        self._ensure_running()
+        netmon.request_call_mode(self.cfg, on)
+        self.msg_var.set("Modo chamada ligado: 1 pacote por segundo, testes de velocidade suspensos." if on
+                         else "Modo chamada desligado.")
+        self.root.after(1500, lambda: self._tick_status(reschedule=False))
+
     def test_now(self):
         self._ensure_running()
         netmon.request_speed_test(self.cfg)
@@ -688,8 +741,16 @@ class App:
             if not netmon.re.fullmatch(r"\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}", q):
                 messagebox.showerror("netmon", f"Horário inválido: {q}. Use o formato 09:00-12:00.")
                 return
+        sched = [q.strip() for q in self.call_sched.get().replace(";", ",").split(",") if q.strip()]
+        for entry in sched:
+            try:
+                netmon.parse_schedule_entry(entry)
+            except ValueError as exc:
+                messagebox.showerror("netmon", f"Agenda do modo chamada: {exc}. Use o formato seg-sex 08:00-18:00.")
+                return
         size = {n: (d, u) for n, d, u in SIZE_PRESETS}[self.size.get()]
         changes = {
+            "call_mode": {"schedule": sched, "skip_speed": self.call_skip_var.get()},
             "plan": {"download_mbps": plan_d, "upload_mbps": plan_u},
             "speed": {"interval_s": dict(INTERVAL_PRESETS)[self.interval.get()],
                       "download_bytes": size[0], "upload_bytes": size[1],
@@ -722,6 +783,11 @@ class App:
             self.status_var.set(f"Monitorando desde {since}")
             self.dot.itemconfig(self.dot_id, fill="#16a34a")
             self.btn_toggle.config(text="Parar")
+            if st.get("call_mode"):
+                self.btn_call.config(text="Desligar modo chamada" if st.get("call_reason") == "manual"
+                                     else "Pausar modo chamada (agenda)")
+            else:
+                self.btn_call.config(text="Ligar modo chamada")
         else:
             self.status_var.set("Monitor parado")
             self.dot.itemconfig(self.dot_id, fill="#dc2626")
@@ -781,6 +847,17 @@ class App:
                 color = "#dc2626" if plan and rows[0]["mbps"] < plan * 0.5 else "#111827"
                 v.config(text=f"{rows[0]['mbps']:.1f} Mbps", foreground=color)
                 s.config(text=f"às {netmon.fmt_ts(rows[0]['ts'])}" + (f", plano {plan:.0f}" if plan else ""))
+        v, s = self.tiles["call"]
+        st = netmon.monitor_status(self.cfg)
+        today0 = dt.datetime.combine(dt.date.today(), dt.time.min).timestamp()
+        nb = q("SELECT COUNT(*) AS n, COALESCE(MAX(duration_s),0) AS mx FROM call_burst WHERE kind='internet' "
+               "AND ts >= ?", (today0,))[0]
+        mins = q("SELECT COUNT(*) AS n FROM call_minute WHERE kind='internet' AND ts >= ?", (today0,))[0]["n"]
+        if st.get("call_mode"):
+            v.config(text="ligado", foreground="#16a34a")
+        else:
+            v.config(text="desligado", foreground="#6b7280")
+        s.config(text=f"hoje: {mins} min, {nb['n']} travamentos" + (f", máx {nb['mx']:.0f} s" if nb["n"] else ""))
         v, s = self.tiles["today"]
         since = time.time() - 86400
         cyc = q("SELECT cycle, MAX(received) AS m FROM ping WHERE kind='internet' AND ts >= ? GROUP BY cycle", (since,))

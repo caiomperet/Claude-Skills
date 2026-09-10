@@ -93,6 +93,22 @@ a roda do mouse para aproximar. "Agora" volta ao presente e o gráfico passa a
 se atualizar sozinho a cada minuto. Passe o mouse sobre o gráfico para ler o
 valor e o horário de cada ponto.
 
+**Modo chamada.** A medição normal é uma vez por minuto, o que não enxerga
+um travamento de 3 segundos. O modo chamada dispara 1 pacote por segundo para
+a internet e para o roteador e registra um resumo por minuto e uma linha por
+rajada de perda (início e duração), que é exatamente o que um congelamento de
+vídeo tem por trás. Custa cerca de 0,5 MB por hora de banda e uns 5 KB de
+disco. Ligue pelo botão "Ligar modo chamada" ou deixe automático em
+Configurações, por exemplo `seg-sex 08:00-18:00`. Enquanto ele está ativo os
+testes de velocidade ficam suspensos por padrão, porque o upload de teste
+satura a conexão por cerca de um segundo e pode ele mesmo travar uma chamada
+em outro computador da casa. As rajadas aparecem no gráfico de histórico como
+"Travamentos", no relatório e no resumo.
+
+Se o computador que monitora não é o mesmo das chamadas, ligue-o à rede do
+mesmo jeito (Wi-Fi ou cabo, e na mesma banda de Wi-Fi) para que a medição até
+o roteador represente o caminho que a chamada usa.
+
 O histórico é mantido por tempo indeterminado (cerca de 300 MB por ano com os
 padrões). Para limitar, defina `retention_days` no `config.json`; zero mantém
 tudo.
@@ -122,6 +138,7 @@ python netmon.py once         # ou, sem interface: valida a instalação
 python netmon.py start        # inicia o monitor em segundo plano
 python netmon.py status       # confere se está rodando
 python netmon.py stop         # para
+python netmon.py call on      # liga o modo chamada (call off desliga)
 ```
 
 Rodando a partir do código, `config.json`, banco e log ficam ao lado do
@@ -215,9 +232,11 @@ padrão. Chaves relevantes:
 
 ## Estrutura dos dados
 
-Banco SQLite `netmon.db` com quatro tabelas: `ping` (uma linha por host por
-ciclo), `dns`, `speed` (uma linha por direção por teste, inclusive falhas) e
-`events` (início e parada do monitor, quedas, testes adiados e o motivo). Todos
+Banco SQLite `netmon.db` com as tabelas `ping` (uma linha por host por
+ciclo), `dns`, `speed` (uma linha por direção por teste, inclusive falhas),
+`call_minute` e `call_burst` (modo chamada: resumo por minuto e rajadas de
+perda) e `events` (início e parada do monitor, quedas, modo chamada, testes
+adiados e o motivo). Todos
 os horários são timestamps Unix; o CSV exportado inclui a data legível.
 
 Arquivos de controle na pasta de dados: `netmon.pid` (heartbeat do monitor, é
