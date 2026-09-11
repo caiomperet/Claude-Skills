@@ -48,7 +48,7 @@ import urllib.request
 import webbrowser
 
 APP = "netmon"
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 FROZEN = getattr(sys, "frozen", False)
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 SYSTEM = platform.system()
@@ -123,9 +123,9 @@ DEFAULT_CONFIG = {
     "speed": {
         "interval_s": 1800,
         "download_bytes": 10000000,
-        "max_download_bytes": 60000000,
+        "max_download_bytes": 80000000,
         "warmup_s": 0.5,
-        "min_window_s": 0.7,
+        "min_window_s": 0.5,
         "upload_bytes": 4000000,
         "max_seconds": 12,
         "timeout_s": 25,
@@ -598,7 +598,7 @@ def choose_ping_method(pcfg, sample_host):
 # Sondas: velocidade e tráfego atual
 # --------------------------------------------------------------------------
 
-def measure_download(url_tpl, max_bytes, max_seconds, timeout_s, warmup_s=0.5, min_window_s=0.7):
+def measure_download(url_tpl, max_bytes, max_seconds, timeout_s, warmup_s=0.5, min_window_s=0.5):
     """Mede o download descartando a partida lenta do TCP.
 
     Numa conexão rápida, um arquivo pequeno termina antes de a janela do TCP
@@ -1244,6 +1244,8 @@ class Monitor:
         cap = int(scfg.get("max_download_bytes") or 60000000)
         if result and not result.get("confident") and self.download_bytes < cap:
             self.download_bytes = min(cap, self.download_bytes * 2)
+            # o teto precisa dar uma janela útil também em linhas rápidas:
+            # 80 MB rendem ~0,9 s de medição numa conexão de 500 Mbps
             save_state(self.cfg, {"download_bytes": self.download_bytes})
             log.info("janela de medição curta demais; próximo download usará %.0f MB",
                      self.download_bytes / 1e6)
