@@ -62,14 +62,15 @@ SERIES = [
     ("rtt", "Latência (ms)", "#2ca02c", "ms", "line"),
     ("jitter", "Jitter (ms)", "#17becf", "ms", "line"),
     ("loss", "Perda de pacotes (%)", "#d62728", "%", "area"),
-    ("gw_loss", "Perda até o roteador (%)", "#9467bd", "%", "area"),
+    ("gw_loss", "Perda no 1º salto (%)", "#9467bd", "%", "area"),
+    ("hop2_loss", "Perda no 2º salto (%)", "#c026d3", "%", "area"),
     ("dns", "DNS (ms)", "#8c564b", "ms", "line"),
     ("avail", "Disponibilidade por dia (%)", "#16a34a", "%", "bars"),
     ("call_rtt", "Latência 1/s (ms)", "#0d9488", "ms", "line"),
     ("bursts", "Travamentos (s)", "#b91c1c", "s", "spikes"),
     ("marks", "Marcações (espaço)", "#7c3aed", "", "overlay"),
 ]
-DEFAULT_SERIES = {"down", "up", "rtt", "loss", "avail", "bursts", "marks"}
+DEFAULT_SERIES = {"down", "up", "rtt", "loss", "gw_loss", "hop2_loss", "bursts", "marks"}
 PERIODS = [("1 dia", 1), ("3 dias", 3), ("7 dias", 7), ("15 dias", 15)]
 DAY = 86400.0
 
@@ -247,7 +248,7 @@ class HistoryChart(ttk.Frame):
         # pings: agrega por ciclo e depois por balde (mediana de latência, máximo de perda)
         day0 = dt.datetime.fromtimestamp(t0).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
         day1 = dt.datetime.fromtimestamp(t1).replace(hour=0, minute=0, second=0, microsecond=0).timestamp() + DAY
-        pings = q("SELECT cycle, kind, loss_pct, rtt_avg, jitter, received, during_speed FROM ping "
+        pings = q("SELECT cycle, host, kind, loss_pct, rtt_avg, jitter, received, during_speed FROM ping "
                   "WHERE ts BETWEEN ? AND ? ORDER BY cycle", (day0, day1))
         cycles = netmon.aggregate_cycles(pings)
         acc = {}
@@ -255,7 +256,7 @@ class HistoryChart(ttk.Frame):
             if not (t0 <= c["ts"] <= t1):
                 continue
             b = int((c["ts"] - t0) / bucket_s)
-            a = acc.setdefault(b, {"rtt": [], "jitter": [], "loss": [], "gw_loss": []})
+            a = acc.setdefault(b, {"rtt": [], "jitter": [], "loss": [], "gw_loss": [], "hop2_loss": []})
             if not c["during_speed"]:
                 if c["rtt"] is not None:
                     a["rtt"].append(c["rtt"])
@@ -264,7 +265,10 @@ class HistoryChart(ttk.Frame):
                 a["loss"].append(c["loss"])
             if c["gw_loss"] is not None:
                 a["gw_loss"].append(c["gw_loss"])
-        for key, agg in (("rtt", statistics.median), ("jitter", statistics.median), ("loss", max), ("gw_loss", max)):
+            if c["hop2_loss"] is not None:
+                a["hop2_loss"].append(c["hop2_loss"])
+        for key, agg in (("rtt", statistics.median), ("jitter", statistics.median), ("loss", max),
+                         ("gw_loss", max), ("hop2_loss", max)):
             out[key] = [(t0 + (b + 0.5) * bucket_s, agg(a[key])) for b, a in sorted(acc.items()) if a[key]]
 
         # disponibilidade por dia (dia local inteiro, mesmo que a janela o corte)
@@ -277,14 +281,14 @@ class HistoryChart(ttk.Frame):
                         for d, (tot, dn) in sorted(by_day.items()) if tot]
 
         cm = q("SELECT ts, rtt_avg FROM call_minute WHERE kind='internet' AND rtt_avg IS NOT NULL "
-               "AND ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))
+               "AND COALESCE(suspect,0)=0 AND ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))
         acc = {}
         for r in cm:
             acc.setdefault(int((r["ts"] - t0) / bucket_s), []).append(r["rtt_avg"])
         out["call_rtt"] = [(t0 + (b + 0.5) * bucket_s, max(v)) for b, v in sorted(acc.items())]
         out["bursts"] = [(r["ts"], r["duration_s"] or 0, r["host"], r["kind"]) for r in
-                         q("SELECT ts, duration_s, host, kind FROM call_burst WHERE ts BETWEEN ? AND ? ORDER BY ts",
-                           (t0, t1))]
+                         q("SELECT ts, duration_s, host, kind FROM call_burst WHERE COALESCE(suspect,0)=0 "
+                           "AND ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))]
 
         out["marks"] = [(r["ts"], r["note"]) for r in
                         q("SELECT ts, note FROM marks WHERE ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))]
@@ -568,7 +572,7 @@ class App:
         tiles = ttk.LabelFrame(panel, text="Agora")
         tiles.pack(fill="x", **pad)
         self.tiles = {}
-        for i, (key, title) in enumerate([("ping", "Internet"), ("gw", "Roteador"), ("today", "Últimas 24 h"),
+        for i, (key, title) in enumerate([("ping", "Internet"), ("gw", "Rede local"), ("today", "Últimas 24 h"),
                                           ("down", "Download"), ("up", "Upload"), ("call", "Modo chamada")]):
             f = ttk.Frame(tiles, padding=(10, 4))
             f.grid(row=i // 3, column=i % 3, sticky="nsew")
@@ -638,24 +642,29 @@ class App:
         ttk.Label(g, text="ex.: 09:00-12:00, 14:00-18:00 (horários de reunião; pings continuam)",
                   foreground="#6b7280", font=("", 8)).grid(row=3, column=1, columnspan=4, sticky="w", padx=(6, 2))
 
-        ttk.Label(g, text="Modo chamada automático").grid(row=4, column=0, sticky="w", pady=(6, 0))
-        self.call_sched = ttk.Entry(g, width=34)
-        self.call_sched.grid(row=4, column=1, columnspan=4, sticky="w", padx=(6, 2), pady=(6, 0))
-        ttk.Label(g, text="ex.: seg-sex 08:00-18:00 (ping 1/s e sem teste de velocidade nesses horários)",
+        ttk.Label(g, text="Saltos da rede local").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        self.hops_entry = ttk.Entry(g, width=34)
+        self.hops_entry.grid(row=4, column=1, columnspan=4, sticky="w", padx=(6, 2), pady=(6, 0))
+        ttk.Label(g, text="vazio = descobre sozinho; ex.: 192.168.68.1, 10.0.0.1 (roteador do mesh e da operadora)",
                   foreground="#6b7280", font=("", 8)).grid(row=5, column=1, columnspan=4, sticky="w", padx=(6, 2))
+        ttk.Label(g, text="Modo chamada automático").grid(row=6, column=0, sticky="w", pady=(6, 0))
+        self.call_sched = ttk.Entry(g, width=34)
+        self.call_sched.grid(row=6, column=1, columnspan=4, sticky="w", padx=(6, 2), pady=(6, 0))
+        ttk.Label(g, text="ex.: seg-sex 08:00-18:00 (ping 1/s e sem teste de velocidade nesses horários)",
+                  foreground="#6b7280", font=("", 8)).grid(row=7, column=1, columnspan=4, sticky="w", padx=(6, 2))
         self.call_skip_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(g, text="Suspender testes de velocidade durante o modo chamada",
-                        variable=self.call_skip_var).grid(row=6, column=0, columnspan=4, sticky="w", pady=(6, 0))
+                        variable=self.call_skip_var).grid(row=8, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
         self.autostart_var = tk.BooleanVar(value=netmon.autostart_enabled())
         cb = ttk.Checkbutton(g, text="Iniciar o monitor junto com o Windows", variable=self.autostart_var)
-        cb.grid(row=7, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        cb.grid(row=9, column=0, columnspan=3, sticky="w", pady=(6, 0))
         if not netmon.IS_WINDOWS:
             cb.state(["disabled"])
-        ttk.Button(g, text="Salvar", command=self.save).grid(row=7, column=3, columnspan=2, sticky="e", pady=(6, 0))
+        ttk.Button(g, text="Salvar", command=self.save).grid(row=9, column=3, columnspan=2, sticky="e", pady=(6, 0))
         self.budget_var = tk.StringVar()
         ttk.Label(g, textvariable=self.budget_var, foreground="#6b7280", font=("", 8)).grid(
-            row=8, column=0, columnspan=5, sticky="w", pady=(6, 0))
+            row=10, column=0, columnspan=5, sticky="w", pady=(6, 0))
         self._load_settings()
 
         logf = ttk.LabelFrame(panel, text="Registro")
@@ -682,6 +691,9 @@ class App:
         self.quiet.insert(0, ", ".join(c["speed"].get("quiet_hours", [])))
         self.call_sched.delete(0, "end")
         self.call_sched.insert(0, ", ".join(c["call_mode"].get("schedule", [])))
+        hops = c["ping"].get("local_hops")
+        self.hops_entry.delete(0, "end")
+        self.hops_entry.insert(0, ", ".join(hops) if isinstance(hops, list) else "")
         self.call_skip_var.set(bool(c["call_mode"].get("skip_speed", True)))
         self._update_budget_label()
 
@@ -691,10 +703,18 @@ class App:
             sz = {n: (d, u) for n, d, u in SIZE_PRESETS}.get(self.size.get(),
                                                              (self.cfg["speed"]["download_bytes"],
                                                               self.cfg["speed"]["upload_bytes"]))
-            per_day = (sz[0] + sz[1]) * (86400 / iv) / 1e6
-            self.budget_var.set(f"Consumo máximo dos testes de velocidade: {per_day:.0f} MB por dia "
-                                f"(~{per_day * 30 / 1000:.1f} GB por mês). Os testes são adiados quando a conexão "
-                                f"está em uso.")
+            state = netmon.load_state(self.cfg)
+            real_down = int(state.get("download_bytes") or sz[0])
+            budget = (self.cfg["speed"].get("daily_budget_mb") or 0) * 1e6
+            per_test = real_down + sz[1]
+            if budget:
+                iv = max(iv, per_test / (budget / 86400.0))
+            per_day = per_test * (86400 / iv) / 1e6
+            cresceu = ("  O teste de download cresceu para "
+                       f"{real_down / 1e6:.0f} MB para medir a sua velocidade." if real_down > sz[0] else "")
+            self.budget_var.set(f"Consumo máximo dos testes: {per_day:.0f} MB por dia "
+                                f"(~{per_day * 30 / 1000:.1f} GB por mês), a cada {iv / 60:.0f} min. "
+                                f"Os testes são adiados quando a conexão está em uso.{cresceu}")
         except Exception:  # noqa: BLE001
             self.budget_var.set("")
 
@@ -865,8 +885,14 @@ class App:
             except ValueError as exc:
                 messagebox.showerror("netmon", f"Agenda do modo chamada: {exc}. Use o formato seg-sex 08:00-18:00.")
                 return
+        hops = [h.strip() for h in self.hops_entry.get().replace(";", ",").split(",") if h.strip()]
+        for h in hops:
+            if not netmon.re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", h):
+                messagebox.showerror("netmon", f"Endereço inválido: {h}. Use o formato 192.168.68.1.")
+                return
         size = {n: (d, u) for n, d, u in SIZE_PRESETS}[self.size.get()]
         changes = {
+            "ping": {"local_hops": hops if hops else "auto"},
             "call_mode": {"schedule": sched, "skip_speed": self.call_skip_var.get()},
             "plan": {"download_mbps": plan_d, "upload_mbps": plan_u},
             "speed": {"interval_s": dict(INTERVAL_PRESETS)[self.interval.get()],
@@ -948,15 +974,20 @@ class App:
             v.config(text=f"{fmt(rtt, 0, ' ms')}  perda {loss:.0f}%",
                      foreground="#dc2626" if loss >= 2 else "#111827")
             s.config(text=f"medido às {netmon.fmt_ts(inet[0]['ts'], with_date=False)}")
+        loc = [r for r in last if r["kind"] == "local"]
         v, s = self.tiles["gw"]
         if gw:
             r = gw[0]
             v.config(text=f"{fmt(r['rtt_avg'], 0, ' ms')}  perda {r['loss_pct']:.0f}%",
                      foreground="#dc2626" if r["loss_pct"] >= 1 else "#111827")
-            s.config(text=r["host"])
+            extra = ""
+            if loc:
+                l = loc[0]
+                extra = f"  |  2º {l['host']}: {fmt(l['rtt_avg'], 0, ' ms')}, perda {l['loss_pct']:.0f}%"
+            s.config(text=f"1º {r['host']}{extra}")
         else:
             v.config(text="-")
-            s.config(text="gateway não detectado")
+            s.config(text="nenhum salto local detectado")
         for key, direction in (("down", "download"), ("up", "upload")):
             v, s = self.tiles[key]
             rows = q("SELECT mbps, ts FROM speed WHERE ok=1 AND direction=? ORDER BY ts DESC LIMIT 1", (direction,))
@@ -969,8 +1000,9 @@ class App:
         st = netmon.monitor_status(self.cfg)
         today0 = dt.datetime.combine(dt.date.today(), dt.time.min).timestamp()
         nb = q("SELECT COUNT(*) AS n, COALESCE(MAX(duration_s),0) AS mx FROM call_burst WHERE kind='internet' "
-               "AND ts >= ?", (today0,))[0]
-        mins = q("SELECT COUNT(*) AS n FROM call_minute WHERE kind='internet' AND ts >= ?", (today0,))[0]["n"]
+               "AND COALESCE(suspect,0)=0 AND ts >= ?", (today0,))[0]
+        mins = q("SELECT COUNT(*) AS n FROM call_minute WHERE kind='internet' AND COALESCE(suspect,0)=0 "
+                 "AND ts >= ?", (today0,))[0]["n"]
         if st.get("call_mode"):
             v.config(text="ligado", foreground="#16a34a")
         else:

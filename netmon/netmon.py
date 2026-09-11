@@ -48,7 +48,7 @@ import urllib.request
 import webbrowser
 
 APP = "netmon"
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 FROZEN = getattr(sys, "frozen", False)
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable if FROZEN else __file__))
 SYSTEM = platform.system()
@@ -108,6 +108,7 @@ DEFAULT_CONFIG = {
         "interval_s": 60,
         "hosts": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
         "gateway": "auto",
+        "local_hops": "auto",
         "count": 10,
         "packet_interval_ms": 500,
         "timeout_s": 2,
@@ -122,6 +123,9 @@ DEFAULT_CONFIG = {
     "speed": {
         "interval_s": 1800,
         "download_bytes": 10000000,
+        "max_download_bytes": 60000000,
+        "warmup_s": 0.5,
+        "min_window_s": 0.7,
         "upload_bytes": 4000000,
         "max_seconds": 12,
         "timeout_s": 25,
@@ -129,7 +133,7 @@ DEFAULT_CONFIG = {
         "upload_urls": ["https://speed.cloudflare.com/__up"],
         "skip_if_busy_mbps": 2.0,
         "busy_retry_s": 300,
-        "daily_budget_mb": 1500,
+        "daily_budget_mb": 700,
         "quiet_hours": [],
     },
 }
@@ -298,6 +302,17 @@ CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
 """
 
 
+# Colunas acrescentadas depois da primeira versão. SQLite não tem
+# "ADD COLUMN IF NOT EXISTS", então conferimos antes de alterar.
+MIGRATIONS = [
+    ("call_burst", "suspect", "INTEGER DEFAULT 0"),
+    ("call_minute", "suspect", "INTEGER DEFAULT 0"),
+    ("speed", "confident", "INTEGER DEFAULT 1"),
+    ("speed", "window_s", "REAL"),
+    ("ping", "hop", "INTEGER DEFAULT 0"),
+]
+
+
 class Store:
     def __init__(self, path):
         self.path = path
@@ -305,7 +320,64 @@ class Store:
         self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        for table, col, decl in MIGRATIONS:
+            cols = [r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")]
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        self.conn.commit()
+        self.mark_artifacts()
+        self.mark_weak_speed()
+
+    def coverage_blocks(self):
+        """Intervalos em que o modo chamada realmente estava medindo.
+
+        Uma linha por minuto é gravada mesmo quando nada responde, então falta
+        de linhas significa processo parado (computador suspenso), não queda."""
+        rows = self.conn.execute("SELECT ts, sent FROM call_minute WHERE kind='internet' AND "
+                                 "COALESCE(suspect,0)=0 ORDER BY ts").fetchall()
+        blocks = []
+        for ts, sent in rows:
+            end = ts + min(sent or 60, 90)
+            if blocks and ts <= blocks[-1][1] + 5:
+                blocks[-1][1] = max(blocks[-1][1], end)
+            else:
+                blocks.append([ts, end])
+        return blocks
+
+    def mark_weak_speed(self):
+        """Medições antigas sem janela registrada: curtas demais para valer.
+
+        Só marca; não filtra, porque descartar as curtas sobraria justamente as
+        lentas e puxaria a mediana para baixo."""
+        cur = self.conn.execute("UPDATE speed SET confident=0 WHERE window_s IS NULL AND ok=1 AND "
+                                "((direction='download' AND seconds < 1.0) OR "
+                                " (direction='upload' AND seconds < 0.4))")
+        self.conn.commit()
+        return cur.rowcount
+
+    def mark_artifacts(self):
+        """Marca como suspeitas as linhas produzidas por suspensão do computador.
+
+        Não apaga nada: só exclui das estatísticas o que não foi medido."""
+        cur = self.conn.execute("UPDATE call_minute SET suspect=1 WHERE sent > 90 AND COALESCE(suspect,0)=0")
+        minutes = cur.rowcount
+        blocks = self.coverage_blocks()
+        bursts = 0
+        for bid, bts, dur in self.conn.execute(
+                "SELECT id, ts, duration_s FROM call_burst WHERE COALESCE(suspect,0)=0").fetchall():
+            a, b = bts, bts + (dur or 0)
+            if not any(start <= a and b <= end + 1 for start, end in blocks):
+                self.conn.execute("UPDATE call_burst SET suspect=1 WHERE id=?", (bid,))
+                bursts += 1
+        self.conn.commit()
+        if minutes or bursts:
+            log.info("histórico: %d minutos e %d rajadas marcados como artefato de suspensão",
+                     minutes, bursts)
+        return minutes, bursts
 
     def insert(self, table, row):
         cols = ",".join(row.keys())
@@ -469,6 +541,40 @@ def detect_gateway():
         return None
 
 
+def is_private(ip):
+    try:
+        parts = [int(x) for x in ip.split(".")]
+    except ValueError:
+        return False
+    if len(parts) != 4 or any(not 0 <= p <= 255 for p in parts):
+        return False
+    a, b = parts[0], parts[1]
+    return a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
+
+
+def discover_local_hops(target="1.1.1.1", max_hops=4, timeout_s=30):
+    """Descobre os roteadores da própria casa no caminho até a internet.
+
+    Numa rede com mesh atrás do roteador da operadora, isso devolve os dois:
+    o primeiro salto é o Wi-Fi, o segundo é o equipamento da operadora."""
+    if IS_WINDOWS:
+        cmd = ["tracert", "-d", "-h", str(max_hops), "-w", "1000", target]
+    else:
+        cmd = ["traceroute", "-n", "-m", str(max_hops), "-w", "1", "-q", "1", target]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                             timeout=timeout_s, **_subprocess_flags()).stdout
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.info("descoberta de saltos locais indisponível: %s", exc)
+        return []
+    hops = []
+    for line in out.splitlines():
+        for ip in re.findall(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", line):
+            if ip != target and is_private(ip) and ip not in hops:
+                hops.append(ip)
+    return hops[:3]
+
+
 def choose_ping_method(pcfg, sample_host):
     method = pcfg.get("method", "auto")
     if method in ("icmp", "tcp"):
@@ -492,13 +598,20 @@ def choose_ping_method(pcfg, sample_host):
 # Sondas: velocidade e tráfego atual
 # --------------------------------------------------------------------------
 
-def measure_download(url_tpl, max_bytes, max_seconds, timeout_s):
+def measure_download(url_tpl, max_bytes, max_seconds, timeout_s, warmup_s=0.5, min_window_s=0.7):
+    """Mede o download descartando a partida lenta do TCP.
+
+    Numa conexão rápida, um arquivo pequeno termina antes de a janela do TCP
+    abrir, e o tempo até o primeiro byte domina a conta. Por isso a medição
+    começa só depois de warmup_s de transferência, e o resultado é marcado
+    como pouco confiável quando a janela medida ficou curta demais."""
     url = url_tpl.replace("{bytes}", str(max_bytes))
     req = urllib.request.Request(url, headers={
         "User-Agent": USER_AGENT, "Cache-Control": "no-cache", "Pragma": "no-cache"})
     total = 0
     first_t = None
-    first_n = 0
+    mark_t = None
+    mark_bytes = 0
     t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:
         while True:
@@ -507,21 +620,24 @@ def measure_download(url_tpl, max_bytes, max_seconds, timeout_s):
             if not chunk:
                 break
             if first_t is None:
-                first_t, first_n = now, len(chunk)
+                first_t = now
             total += len(chunk)
+            if mark_t is None and now - first_t >= warmup_s:
+                mark_t, mark_bytes = now, total
             if total >= max_bytes or now - t0 >= max_seconds:
                 break
     end = time.perf_counter()
     if first_t is None or total == 0:
         raise RuntimeError("resposta vazia")
-    span = end - first_t
-    measured = total - first_n
-    if span >= 0.25 and measured > 0:
-        mbps = measured * 8 / span / 1e6
+    if mark_t is not None and end - mark_t >= 0.2 and total > mark_bytes:
+        window = end - mark_t
+        mbps = (total - mark_bytes) * 8 / window / 1e6
     else:
-        mbps = total * 8 / (end - t0) / 1e6
+        window = max(end - first_t, 1e-6)
+        mbps = total * 8 / window / 1e6
     return {"url": url, "bytes": total, "seconds": end - t0, "mbps": mbps,
-            "ttfb_ms": (first_t - t0) * 1000.0}
+            "ttfb_ms": (first_t - t0) * 1000.0, "window_s": window,
+            "confident": 1 if window >= min_window_s else 0}
 
 
 def measure_upload(url, n_bytes, timeout_s):
@@ -534,7 +650,7 @@ def measure_upload(url, n_bytes, timeout_s):
     end = time.perf_counter()
     secs = end - t0
     return {"url": url, "bytes": n_bytes, "seconds": secs, "mbps": n_bytes * 8 / secs / 1e6,
-            "ttfb_ms": None}
+            "ttfb_ms": None, "window_s": secs, "confident": 1 if secs >= 0.4 else 0}
 
 
 def net_counters():
@@ -657,7 +773,9 @@ def load_state(cfg):
         return {}
 
 
-def save_state(cfg, state):
+def save_state(cfg, changes):
+    state = load_state(cfg)
+    state.update(changes)
     tmp = control_paths(cfg)["state"] + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(state, fh)
@@ -781,21 +899,31 @@ class CallMonitor:
             st["last_reply"] = now
 
     def _run_icmp(self, host):
-        try:
-            proc = subprocess.Popen(build_continuous_ping_cmd(host), stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, text=True, errors="replace", bufsize=1,
-                                    **_subprocess_flags())
-        except OSError as exc:
-            log.warning("modo chamada: ping indisponível (%s); usando TCP", exc)
-            return self._run_tcp(host)
-        self.procs.append(proc)
-        for line in proc.stdout:
-            if self.stop.is_set():
-                break
-            if "ttl" in line.lower():
-                m = RTT_RE.search(line)
-                if m:
-                    self._reply(host, float(m.group(1).replace(",", ".")))
+        # O ping contínuo pode morrer quando a máquina suspende ou troca de
+        # rede; por isso ele é reiniciado enquanto o modo chamada estiver ativo.
+        while not self.stop.is_set():
+            try:
+                proc = subprocess.Popen(build_continuous_ping_cmd(host), stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True, errors="replace", bufsize=1,
+                                        **_subprocess_flags())
+            except OSError as exc:
+                log.warning("modo chamada: ping indisponível (%s); usando TCP", exc)
+                return self._run_tcp(host)
+            self.procs.append(proc)
+            for line in proc.stdout:
+                if self.stop.is_set():
+                    break
+                if "ttl" in line.lower():
+                    m = RTT_RE.search(line)
+                    if m:
+                        self._reply(host, float(m.group(1).replace(",", ".")))
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            if not self.stop.is_set():
+                log.info("modo chamada: reiniciando o ping contínuo para %s", host)
+                self.stop.wait(2)
 
     def _run_tcp(self, host):
         h, port = split_host_port(host, self.cfg["ping"]["tcp_port"])
@@ -811,9 +939,26 @@ class CallMonitor:
 
     # ---- contabilidade ---------------------------------------------------
 
+    def after_suspend(self, now):
+        """O computador ficou suspenso: descarta tudo que estava em curso."""
+        with self.lock:
+            for st in self.state.values():
+                st["burst_start"] = None
+                st["rtts"] = []
+                st["last_reply"] = now
+                st["minute_start"] = now
+
     def _watchdog(self):
+        last_tick = time.time()
         while not self.stop.wait(0.5):
             now = time.time()
+            gap = now - last_tick
+            last_tick = now
+            if gap > 10:
+                # O laço roda a cada 0.5 s. Um salto grande significa processo
+                # congelado, não rede parada: nada do intervalo vale.
+                self.after_suspend(now)
+                continue
             with self.lock:
                 for host, st in self.state.items():
                     ref = st["last_reply"] if st["last_reply"] is not None else st["started"] + 5
@@ -838,6 +983,7 @@ class CallMonitor:
         rtts = st["rtts"]
         self.store.insert("call_minute", {
             "ts": st["minute_start"], "host": host, "kind": st["kind"],
+            "suspect": 1 if elapsed > 90 else 0,
             "sent": max(int(round(elapsed)), len(rtts)), "received": len(rtts),
             "rtt_min": min(rtts) if rtts else None, "rtt_avg": statistics.fmean(rtts) if rtts else None,
             "rtt_max": max(rtts) if rtts else None})
@@ -968,11 +1114,23 @@ class Monitor:
 
     def setup(self):
         pcfg = self.cfg["ping"]
-        gw = pcfg.get("gateway", "auto")
-        self.gateway = detect_gateway() if gw == "auto" else (gw or None)
+        configured = pcfg.get("local_hops", "auto")
+        if isinstance(configured, list) and configured:
+            self.hops = [h for h in configured if h]
+        else:
+            gw = pcfg.get("gateway", "auto")
+            first = detect_gateway() if gw == "auto" else (gw or None)
+            self.hops = [first] if first else []
+            for ip in discover_local_hops(pcfg["hosts"][0]):
+                if ip not in self.hops:
+                    self.hops.append(ip)
+            self.hops = self.hops[:3]
+        self.gateway = self.hops[0] if self.hops else None
         self.ping_method = choose_ping_method(pcfg, pcfg["hosts"][0])
-        log.info("netmon %s em %s | gateway=%s | método ping=%s | banco=%s",
-                 VERSION, SYSTEM, self.gateway or "desconhecido", self.ping_method, self.store.path)
+        self.download_bytes = int(load_state(self.cfg).get("download_bytes")
+                                  or self.cfg["speed"]["download_bytes"])
+        log.info("netmon %s em %s | saltos locais=%s | método ping=%s | banco=%s",
+                 VERSION, SYSTEM, ", ".join(self.hops) or "nenhum", self.ping_method, self.store.path)
 
     # ---- ping -------------------------------------------------------------
 
@@ -990,9 +1148,9 @@ class Monitor:
     def ping_cycle(self):
         pcfg = self.cfg["ping"]
         cycle = time.time()
-        targets = [(h, "internet") for h in pcfg["hosts"]]
-        if self.gateway:
-            targets.append((self.gateway, "gateway"))
+        targets = [(h, "internet", 0) for h in pcfg["hosts"]]
+        for i, host in enumerate(self.hops):
+            targets.append((host, "gateway" if i == 0 else "local", i + 1))
         results = {}
 
         def work(target):
@@ -1002,7 +1160,7 @@ class Monitor:
                 log.error("sonda %s falhou: %s", target, exc)
                 results[target] = None
 
-        threads = [threading.Thread(target=work, args=(t,), daemon=True) for t, _ in targets]
+        threads = [threading.Thread(target=work, args=(t,), daemon=True) for t, _, _ in targets]
         for th in threads:
             th.start()
         for th in threads:
@@ -1010,12 +1168,12 @@ class Monitor:
 
         during = 1 if self.speed_running.is_set() else 0
         summary = []
-        for target, kind in targets:
+        for target, kind, hop in targets:
             res = results.get(target)
             if res is None:
                 res = ProbeResult(pcfg["count"], 0, [], "error")
             self.store.insert("ping", {
-                "ts": time.time(), "cycle": cycle, "host": target, "kind": kind,
+                "ts": time.time(), "cycle": cycle, "host": target, "kind": kind, "hop": hop,
                 "method": res.method, "sent": res.sent, "received": res.received,
                 "loss_pct": res.loss_pct, "rtt_min": res.rtt_min, "rtt_avg": res.rtt_avg,
                 "rtt_max": res.rtt_max, "jitter": res.jitter, "during_speed": during})
@@ -1023,7 +1181,7 @@ class Monitor:
             summary.append(f"{target}[{kind[0]}] perda={res.loss_pct:.0f}% rtt={rtt}")
         log.debug("ping: %s", " | ".join(summary))
 
-        internet = [results.get(t) for t, k in targets if k == "internet"]
+        internet = [results.get(t) for t, k, _ in targets if k == "internet"]
         internet = [r for r in internet if r is not None]
         all_down = bool(internet) and all(r.received == 0 for r in internet)
         if all_down and not self.down:
@@ -1070,6 +1228,26 @@ class Monitor:
                 return f"busy:{traffic:.1f}mbps"
         return None
 
+    def speed_interval(self):
+        """Espaça os testes para caber no orçamento diário de dados."""
+        scfg = self.cfg["speed"]
+        base = scfg["interval_s"]
+        budget = (scfg.get("daily_budget_mb") or 0) * 1e6
+        if budget:
+            per_test = self.download_bytes + scfg["upload_bytes"]
+            base = max(base, per_test / (budget / 86400.0))
+        return base
+
+    def _adapt_download(self, result):
+        """Cresce o tamanho do teste até medir uma janela útil na sua velocidade."""
+        scfg = self.cfg["speed"]
+        cap = int(scfg.get("max_download_bytes") or 60000000)
+        if result and not result.get("confident") and self.download_bytes < cap:
+            self.download_bytes = min(cap, self.download_bytes * 2)
+            save_state(self.cfg, {"download_bytes": self.download_bytes})
+            log.info("janela de medição curta demais; próximo download usará %.0f MB",
+                     self.download_bytes / 1e6)
+
     def speed_cycle(self, force=False):
         scfg = self.cfg["speed"]
         if not force:
@@ -1080,9 +1258,11 @@ class Monitor:
                 return scfg["busy_retry_s"] if reason.startswith("busy") else None
         self.speed_running.set()
         try:
-            self._run_direction("download", scfg["download_urls"],
-                                lambda u: measure_download(u, scfg["download_bytes"],
-                                                           scfg["max_seconds"], scfg["timeout_s"]))
+            r = self._run_direction("download", scfg["download_urls"],
+                                    lambda u: measure_download(u, self.download_bytes, scfg["max_seconds"],
+                                                               scfg["timeout_s"], scfg.get("warmup_s", 0.5),
+                                                               scfg.get("min_window_s", 0.7)))
+            self._adapt_download(r)
             self._run_direction("upload", scfg["upload_urls"],
                                 lambda u: measure_upload(u, scfg["upload_bytes"], scfg["timeout_s"]))
         finally:
@@ -1100,9 +1280,11 @@ class Monitor:
                 continue
             self.store.insert("speed", {"ts": time.time(), "direction": direction, "url": r["url"],
                                         "bytes": r["bytes"], "seconds": r["seconds"], "mbps": r["mbps"],
-                                        "ttfb_ms": r["ttfb_ms"], "ok": 1, "error": None})
-            log.info("%s: %.1f Mbps (%.1f MB em %.1fs)", direction, r["mbps"],
-                     r["bytes"] / 1e6, r["seconds"])
+                                        "ttfb_ms": r["ttfb_ms"], "ok": 1, "error": None,
+                                        "window_s": r.get("window_s"), "confident": r.get("confident", 1)})
+            log.info("%s: %.1f Mbps (%.1f MB em %.1fs, janela %.2fs%s)", direction, r["mbps"],
+                     r["bytes"] / 1e6, r["seconds"], r.get("window_s") or 0,
+                     "" if r.get("confident", 1) else ", pouco confiável")
             return r
         self.store.insert("speed", {"ts": time.time(), "direction": direction, "url": None, "bytes": 0,
                                     "seconds": None, "mbps": None, "ttfb_ms": None, "ok": 0,
@@ -1110,6 +1292,11 @@ class Monitor:
         return None
 
     # ---- laço -------------------------------------------------------------
+
+    def _interval(self, name, interval_key):
+        if name == "speed":
+            return self.speed_interval()
+        return self.cfg[name][interval_key]
 
     def _loop(self, name, interval_key, fn, trigger=None):
         next_run = time.time()
@@ -1127,7 +1314,7 @@ class Monitor:
                     retry = fn()
                 except Exception:  # noqa: BLE001
                     log.exception("erro no laço %s", name)
-                interval = self.cfg[name][interval_key]
+                interval = self._interval(name, interval_key)
                 if retry:
                     interval = min(interval, retry)
                 next_run = started + interval
@@ -1188,6 +1375,14 @@ class Monitor:
         log.info("histórico anterior a %d dias removido", days)
 
     def _check_signals(self):
+        now = time.time()
+        gap = now - getattr(self, "_last_tick", now)
+        self._last_tick = now
+        if gap > 10:
+            self.store.event("suspend", f"{gap:.0f}")
+            log.warning("computador ficou %.0f s suspenso; medições do intervalo descartadas", gap)
+            if self.call is not None:
+                self.call.after_suspend(now)
         if time.time() - getattr(self, "_last_beat", 0) >= 10:
             self._write_heartbeat()
         if time.time() - getattr(self, "_last_prune", 0) >= 86400:
@@ -1398,27 +1593,34 @@ def explain_mark(store, ts, window_s=120, burst_before_s=90, burst_after_s=15):
 
     Rajadas contam se começaram até 90 s antes da tecla (o travamento estava
     acontecendo) ou até 15 s depois (a tecla veio no começo dele)."""
-    bursts = store.query("SELECT ts, duration_s, kind FROM call_burst WHERE ts BETWEEN ? AND ? ORDER BY ts",
-                         (ts - burst_before_s, ts + burst_after_s))
+    bursts = store.query("SELECT ts, duration_s, kind FROM call_burst WHERE COALESCE(suspect,0)=0 "
+                         "AND ts BETWEEN ? AND ? ORDER BY ts", (ts - burst_before_s, ts + burst_after_s))
     inet = [b for b in bursts if b["kind"] == "internet"]
-    gw = [b for b in bursts if b["kind"] == "gateway"]
+    gw = [b for b in bursts if b["kind"] in ("gateway", "local")]
     if inet:
         nearest = min(inet, key=lambda b: abs(b["ts"] - ts))
         delta = nearest["ts"] - ts
         when = ("no mesmo instante" if abs(delta) < 3 else
                 f"{abs(delta):.0f} s {'antes' if delta < 0 else 'depois'}")
-        local = " O roteador também falhou: origem na rede local." if gw else " Roteador respondeu: origem no provedor."
+        local = (" O roteador também falhou: origem na rede local." if gw
+                 else " Roteador respondeu: origem fora de casa.")
         return ("critico", f"Rajada de {nearest['duration_s']:.0f} s sem resposta {when}." + local)
-    pings = store.query("SELECT cycle, kind, loss_pct, rtt_avg, received, jitter, during_speed FROM ping "
+    pings = store.query("SELECT cycle, host, kind, loss_pct, rtt_avg, received, jitter, during_speed FROM ping "
                         "WHERE ts BETWEEN ? AND ?", (ts - window_s, ts + window_s + 30))
     cycles = aggregate_cycles(pings)
     lossy = [c for c in cycles if c["loss"] > 0]
     gw_lossy = [c for c in cycles if (c["gw_loss"] or 0) > 0]
-    call_on = store.query("SELECT COUNT(*) AS n FROM call_minute WHERE ts BETWEEN ? AND ?",
-                          (ts - window_s, ts + window_s))[0]["n"] > 0
+    hop2_lossy = [c for c in cycles if (c["hop2_loss"] or 0) > 0]
+    call_on = store.query("SELECT COUNT(*) AS n FROM call_minute WHERE COALESCE(suspect,0)=0 "
+                          "AND ts BETWEEN ? AND ?", (ts - window_s, ts + window_s))[0]["n"] > 0
     if lossy:
         worst = max(lossy, key=lambda c: c["loss"])
-        local = " Também até o roteador." if gw_lossy else " Roteador limpo."
+        if gw_lossy:
+            local = " Também no primeiro salto: Wi-Fi ou roteador de casa."
+        elif hop2_lossy:
+            local = " Primeiro salto limpo, mas o segundo falhou: problema entre os dois equipamentos."
+        else:
+            local = " Rede local limpa: origem fora de casa."
         return ("atencao", f"Perda de {worst['loss']:.0f}% no ciclo de {fmt_ts(worst['ts'], False)} "
                            f"(medição por minuto).{local}")
     rtts = [c["rtt"] for c in cycles if c["rtt"] is not None]
@@ -1472,11 +1674,13 @@ def aggregate_cycles(pings):
     for cyc, rows in sorted(by_cycle.items()):
         inet = [r for r in rows if r["kind"] == "internet"]
         gws = [r for r in rows if r["kind"] == "gateway"]
+        loc = [r for r in rows if r["kind"] == "local"]
         if not inet:
             continue
         rtts = [r["rtt_avg"] for r in inet if r["rtt_avg"] is not None]
         jits = [r["jitter"] for r in inet if r["jitter"] is not None]
         gw = gws[0] if gws else None
+        hop2 = loc[0] if loc else None
         cycles.append({
             "ts": cyc,
             "loss": statistics.median(r["loss_pct"] for r in inet),
@@ -1486,6 +1690,10 @@ def aggregate_cycles(pings):
             "during_speed": any(r["during_speed"] for r in rows),
             "gw_loss": gw["loss_pct"] if gw else None,
             "gw_rtt": gw["rtt_avg"] if gw else None,
+            "gw_host": gw["host"] if gw else None,
+            "hop2_loss": hop2["loss_pct"] if hop2 else None,
+            "hop2_rtt": hop2["rtt_avg"] if hop2 else None,
+            "hop2_host": hop2["host"] if hop2 else None,
         })
     return cycles
 
@@ -1566,10 +1774,37 @@ def compute_stats(cfg, store, days):
                                key=lambda c: (-c["loss"], -(c["rtt"] or 0)))[:10],
     }
 
+    T2 = THRESHOLDS["loss_cycle_pct"]
+    hop2 = [c for c in clean if c["hop2_loss"] is not None]
+    st["hop2"] = None
+    if hop2:
+        st["hop2"] = {
+            "host": next((c["hop2_host"] for c in hop2 if c["hop2_host"]), None),
+            "n": len(hop2),
+            "loss_avg": statistics.fmean(c["hop2_loss"] for c in hop2),
+            "rtt_p50": percentile([c["hop2_rtt"] for c in hop2], 50),
+            "rtt_p95": percentile([c["hop2_rtt"] for c in hop2], 95),
+        }
+    # Onde a perda nasce: primeiro salto (Wi-Fi), entre os equipamentos da casa,
+    # ou depois da rede local (provedor).
+    blame = {"wifi": 0, "casa": 0, "fora": 0, "total": 0}
+    for c in clean:
+        if c["loss"] < T2 or c["gw_loss"] is None:
+            continue
+        blame["total"] += 1
+        if c["gw_loss"] >= T2:
+            blame["wifi"] += 1
+        elif (c["hop2_loss"] or 0) >= T2:
+            blame["casa"] += 1
+        else:
+            blame["fora"] += 1
+    st["blame"] = blame
+
     gw = [c for c in clean if c["gw_loss"] is not None]
     st["gateway"] = None
     if gw:
         st["gateway"] = {
+            "host": next((c["gw_host"] for c in gw if c["gw_host"]), None),
             "n": len(gw),
             "loss_avg": statistics.fmean(c["gw_loss"] for c in gw),
             "loss_any_pct": 100.0 * sum(1 for c in gw if c["gw_loss"] > 0) / len(gw),
@@ -1583,11 +1818,16 @@ def compute_stats(cfg, store, days):
     st["speed"] = {}
     for direction, plan_key in (("download", "download_mbps"), ("upload", "upload_mbps")):
         rows = [s for s in speeds if s["direction"] == direction]
+        # Todas as medições entram na estatística: filtrar as curtas deixaria só
+        # as lentas, porque num teste de bytes fixos o lento é justamente o que
+        # dura mais. A contagem de medições fracas vira um aviso de confiança.
         ok = [s for s in rows if s["ok"] and s["mbps"] is not None]
+        weak = sum(1 for s in ok if not s.get("confident", 1))
         vals = [s["mbps"] for s in ok]
         plan_mbps = float(plan.get(plan_key) or 0)
         d = {
-            "n": len(ok), "failed": len(rows) - len(ok), "plan": plan_mbps,
+            "n": len(ok), "weak": weak, "failed": sum(1 for s in rows if not s["ok"]), "plan": plan_mbps,
+            "unreliable": bool(ok) and weak > 0.3 * len(ok),
             "min": min(vals) if vals else None, "max": max(vals) if vals else None,
             "p5": percentile(vals, 5), "p50": percentile(vals, 50), "p95": percentile(vals, 95),
             "series": [(s["ts"], s["mbps"]) for s in ok],
@@ -1604,11 +1844,13 @@ def compute_stats(cfg, store, days):
             key = (e["detail"] or "").split(":")[0]
             st["speed_skip_reasons"][key] = st["speed_skip_reasons"].get(key, 0) + 1
 
-    bursts = store.query("SELECT * FROM call_burst WHERE ts >= ? ORDER BY ts", (start,))
-    call_minutes = store.query("SELECT COUNT(*) AS n FROM call_minute WHERE kind='internet' AND ts >= ?",
-                               (start,))[0]["n"]
+    bursts = store.query("SELECT * FROM call_burst WHERE COALESCE(suspect,0)=0 AND ts >= ? ORDER BY ts", (start,))
+    call_minutes = store.query("SELECT COUNT(*) AS n FROM call_minute WHERE kind='internet' AND "
+                               "COALESCE(suspect,0)=0 AND ts >= ?", (start,))[0]["n"]
+    discarded = store.query("SELECT COUNT(*) AS n FROM call_burst WHERE COALESCE(suspect,0)=1 AND ts >= ?",
+                            (start,))[0]["n"]
     inet_bursts = [b for b in bursts if b["kind"] == "internet"]
-    gw_bursts = [b for b in bursts if b["kind"] == "gateway"]
+    gw_bursts = [b for b in bursts if b["kind"] in ("gateway", "local")]
     st["call"] = {
         "minutes": call_minutes,
         "bursts": inet_bursts,
@@ -1616,6 +1858,7 @@ def compute_stats(cfg, store, days):
         "total_s": sum(b["duration_s"] or 0 for b in inet_bursts),
         "longest_s": max((b["duration_s"] or 0 for b in inet_bursts), default=0),
         "per_hour": 60.0 * len(inet_bursts) / call_minutes if call_minutes else None,
+        "discarded": discarded,
     }
 
     marks = store.query("SELECT ts, note FROM marks WHERE ts >= ? ORDER BY ts", (start,))
@@ -1631,6 +1874,7 @@ def compute_stats(cfg, store, days):
         "p50": percentile([d["ms"] for d in dns_ok], 50),
         "p95": percentile([d["ms"] for d in dns_ok], 95),
     }
+    st["suspends"] = [e for e in events if e["kind"] == "suspend"]
     st["events"] = events
     st["verdict"] = build_verdict(st)
     return st
@@ -1649,31 +1893,53 @@ def build_verdict(st):
                       f"Há {st['cycles']} ciclos de medição ({st['monitored_hours']:.1f} h). Deixe o monitor "
                       "rodar por pelo menos uma semana, cobrindo dias úteis e fins de semana, antes de decidir."))
 
+    blame = st.get("blame") or {"total": 0}
     gw = st.get("gateway")
-    if gw:
-        if gw["loss_avg"] >= T["gateway_loss_pct"] or gw["loss_any_pct"] >= 10:
+    hop2 = st.get("hop2")
+    if blame["total"]:
+        share = lambda k: 100.0 * blame[k] / blame["total"]
+        onde = [f"{share('wifi'):.0f}% no primeiro salto"]
+        if hop2:
+            onde.append(f"{share('casa'):.0f}% entre os equipamentos da casa")
+        onde.append(f"{share('fora'):.0f}% além da rede local")
+        detalhe = (f"Dos {blame['total']} ciclos com perda relevante: " + ", ".join(onde) + ". "
+                   + (f"Primeiro salto: {gw['host']}. " if gw and gw.get("host") else "")
+                   + (f"Segundo: {hop2['host']}. " if hop2 and hop2.get("host") else ""))
+        if share("wifi") >= 50:
             local_problem = True
-            items.append(("critico", "Perda de pacotes até o roteador",
-                          f"Perda média de {gw['loss_avg']:.1f}% e {gw['loss_any_pct']:.0f}% dos ciclos com alguma "
-                          "perda entre este computador e o gateway. Isso é problema da rede local (Wi-Fi, cabo, "
-                          "roteador), e trocar de provedor não resolve. Teste por cabo ou reposicione o roteador."))
+            items.append(("critico", "A maior parte da perda nasce no primeiro salto",
+                          detalhe + "Isso é a ligação entre este computador e o roteador, normalmente o Wi-Fi. "
+                          "Trocar de provedor não resolve. Teste por cabo, aproxime-se do roteador ou "
+                          "verifique se há duas redes sem fio disputando canal."))
+        elif hop2 and share("casa") >= 30:
+            local_problem = True
+            items.append(("critico", "Perda entre os equipamentos da casa",
+                          detalhe + "O primeiro salto responde, mas o seguinte falha. Suspeite do cabo entre os "
+                          "dois aparelhos, do enlace sem fio entre nós do mesh ou do equipamento da operadora."))
         else:
             items.append(("ok", "Rede local saudável",
-                          f"Perda até o roteador de {gw['loss_avg']:.2f}% (p95 de latência "
-                          f"{fmt_num(gw['rtt_p95'], 0, ' ms')}). Problemas observados adiante são do provedor."))
+                          detalhe + "A perda se concentra fora de casa, então a responsabilidade é do provedor."))
+    elif gw:
+        items.append(("ok", "Rede local saudável",
+                      f"Perda até o roteador de {gw['loss_avg']:.2f}% (p95 de latência "
+                      f"{fmt_num(gw['rtt_p95'], 0, ' ms')}) e nenhum ciclo com perda relevante."))
     else:
-        items.append(("atencao", "Gateway não monitorado",
+        items.append(("atencao", "Rede local não monitorada",
                       "Sem medição até o roteador não dá para separar problema local de problema do provedor. "
-                      "Informe o IP do roteador em ping.gateway no config.json."))
+                      "Informe os IPs em ping.local_hops no config.json."))
 
     if st["outages_per_week"] is not None:
         opw, mpw = st["outages_per_week"], st["outage_minutes_per_week"]
+        curto = st["monitored_hours"] < 48
+        proj = ("" if curto else
+                f" Equivale a {opw:.1f} quedas e {mpw:.0f} min por semana.")
         if opw > T["outages_per_week"] or mpw > T["outage_minutes_per_week"]:
             isp_unstable = True
             items.append(("critico", "Quedas frequentes",
-                          f"{len(st['outages'])} quedas totais ({fmt_minutes(st['outage_minutes'])}), equivalente a "
-                          f"{opw:.1f} quedas e {mpw:.0f} min por semana. Disponibilidade de "
-                          f"{st['availability_pct']:.2f}%."))
+                          f"{len(st['outages'])} quedas totais ({fmt_minutes(st['outage_minutes'])}) em "
+                          f"{st['monitored_hours']:.0f} h monitoradas.{proj} Disponibilidade de "
+                          f"{st['availability_pct']:.2f}%."
+                          + (" Amostra curta: confirme com mais dias antes de reclamar." if curto else "")))
         elif st["outages"]:
             items.append(("atencao", "Algumas quedas",
                           f"{len(st['outages'])} quedas ({fmt_minutes(st['outage_minutes'])}); disponibilidade "
@@ -1715,9 +1981,16 @@ def build_verdict(st):
                           f"{d['failed']} testes falharam. Verifique speed.download_urls / upload_urls."))
             continue
         base = (f"mediana {d['p50']:.1f} Mbps, p5 {d['p5']:.1f} Mbps, p95 {d['p95']:.1f} Mbps em {d['n']} testes")
+        if d.get("unreliable"):
+            items.append(("atencao", f"{label} sem medição confiável",
+                          f"{d['weak']} dos {d['n']} testes terminaram antes de o TCP acelerar, então os valores "
+                          f"são um piso do método, não a sua velocidade ({base}). O programa já aumenta o tamanho "
+                          "do teste sozinho até medir uma janela útil; refaça a leitura depois de algumas horas. "
+                          "Não dá para acusar o provedor com estes números."))
+            continue
         if d["plan"]:
             ratio5, ratio50 = d["p5"] / d["plan"], d["p50"] / d["plan"]
-            if ratio5 < T["speed_p5_plan_ratio"] or ratio50 < T["speed_p50_plan_ratio"]:
+            if (ratio5 < T["speed_p5_plan_ratio"] or ratio50 < T["speed_p50_plan_ratio"]) and d["n"] >= 5:
                 isp_slow = True
                 items.append(("critico", f"{label} abaixo do contratado",
                               f"{base}. Plano: {d['plan']:.0f} Mbps. Em {d['below_half_plan_pct']:.0f}% dos testes a "
@@ -1764,6 +2037,14 @@ def build_verdict(st):
                       + ("A maioria tem causa na conexão da casa." if confirmed > len(marks) / 2 else
                          "Quando a rede da casa estava limpa, o travamento veio de outro lugar: computador da "
                          "chamada, Wi-Fi dele, VPN ou o serviço de reunião.")))
+
+    susp = st.get("suspends") or []
+    if susp:
+        total = sum(float(e["detail"] or 0) for e in susp)
+        items.append(("atencao", "Computador suspendeu durante o monitoramento",
+                      f"{len(susp)} interrupções somando {fmt_minutes(total / 60)}. Esses intervalos foram "
+                      "descartados das estatísticas, mas são buracos na cobertura. Deixe a suspensão em "
+                      "\"Nunca\" nas opções de energia para o monitoramento ficar contínuo."))
 
     if st["dns"]["n"]:
         if st["dns"]["fail_pct"] > T["dns_fail_pct"]:
@@ -1982,8 +2263,16 @@ def render_html(cfg, st):
     parts.append(kpi("DNS p50 / p95", f"{fmt_num(st['dns']['p50'], 0)} / {fmt_num(st['dns']['p95'], 0)} ms",
                      f"{fmt_num(st['dns']['fail_pct'], 1, '%')} de falhas"))
     if st["gateway"]:
-        parts.append(kpi("Perda até o roteador", fmt_num(st["gateway"]["loss_avg"], 2, "%"),
-                         f"latência p95 {fmt_num(st['gateway']['rtt_p95'], 0, ' ms')}"))
+        parts.append(kpi("Perda no 1º salto", fmt_num(st["gateway"]["loss_avg"], 2, "%"),
+                         f"{st['gateway'].get('host') or ''} | p95 {fmt_num(st['gateway']['rtt_p95'], 0, ' ms')}"))
+    if st.get("hop2"):
+        parts.append(kpi("Perda no 2º salto", fmt_num(st["hop2"]["loss_avg"], 2, "%"),
+                         f"{st['hop2'].get('host') or ''} | p95 {fmt_num(st['hop2']['rtt_p95'], 0, ' ms')}"))
+    blame = st.get("blame") or {"total": 0}
+    if blame["total"]:
+        parts.append(kpi("Origem da perda", f"{100 * blame['wifi'] / blame['total']:.0f}% no 1º salto",
+                         f"{100 * blame['casa'] / blame['total']:.0f}% entre equipamentos, "
+                         f"{100 * blame['fora'] / blame['total']:.0f}% fora de casa"))
     parts.append("</div>")
 
     parts.append("<h2>Diagnóstico</h2><ul class='verdict'>")
@@ -2045,6 +2334,9 @@ def render_html(cfg, st):
     if call.get("minutes"):
         parts.append(f"<h2>Modo chamada: {call['minutes'] / 60:.1f} h de ping contínuo, "
                      f"{len(call['bursts'])} travamentos</h2><div class='card'>")
+        if call.get("discarded"):
+            parts.append(f"<p class='note'>{call['discarded']} rajadas foram descartadas por caírem em "
+                         "intervalos com o computador suspenso.</p>")
         if call["bursts"]:
             parts.append("<table><tr><th>Início</th><th>Duração</th><th>Alvo</th></tr>")
             for b in call["bursts"][-40:]:
@@ -2117,8 +2409,16 @@ def render_text(cfg, st):
         f"{fmt_num(st['dns']['fail_pct'], 1, '%')}",
     ]
     if st["gateway"]:
-        lines.append(f"Roteador            perda {fmt_num(st['gateway']['loss_avg'], 2, '%')}  latência p95 "
-                     f"{fmt_num(st['gateway']['rtt_p95'], 0, ' ms')}")
+        lines.append(f"1o salto local      perda {fmt_num(st['gateway']['loss_avg'], 2, '%')}  latência p95 "
+                     f"{fmt_num(st['gateway']['rtt_p95'], 0, ' ms')}  ({st['gateway'].get('host') or '-'})")
+    if st.get("hop2"):
+        lines.append(f"2o salto local      perda {fmt_num(st['hop2']['loss_avg'], 2, '%')}  latência p95 "
+                     f"{fmt_num(st['hop2']['rtt_p95'], 0, ' ms')}  ({st['hop2'].get('host') or '-'})")
+    bl = st.get("blame") or {"total": 0}
+    if bl["total"]:
+        lines.append(f"Origem da perda     {100*bl['wifi']/bl['total']:.0f}% no 1o salto, "
+                     f"{100*bl['casa']/bl['total']:.0f}% entre equipamentos, "
+                     f"{100*bl['fora']/bl['total']:.0f}% fora de casa")
     call = st.get("call") or {}
     if call.get("minutes"):
         lines.append(f"Modo chamada        {call['minutes'] / 60:.1f} h, {len(call['bursts'])} travamentos, "
@@ -2245,6 +2545,28 @@ def cmd_mark(args, cfg):
     store.close()
 
 
+def cmd_hops(args, cfg):
+    pcfg = cfg["ping"]
+    gw = detect_gateway()
+    print(f"gateway padrão: {gw or 'não detectado'}")
+    found = discover_local_hops(pcfg["hosts"][0])
+    print(f"saltos locais descobertos: {', '.join(found) if found else 'nenhum'}")
+    hops = [h for h in [gw] if h] + [h for h in found if h != gw]
+    print(f"seriam monitorados: {', '.join(hops[:3]) or 'nenhum'}")
+    print("Para fixar manualmente, defina ping.local_hops no config.json.")
+
+
+def cmd_repair(args, cfg):
+    store = Store(cfg["db_path"])          # a própria abertura já remarca
+    m = store.query("SELECT COUNT(*) AS n FROM call_minute WHERE suspect=1")[0]["n"]
+    b = store.query("SELECT COUNT(*) AS n FROM call_burst WHERE suspect=1")[0]["n"]
+    w = store.query("SELECT COUNT(*) AS n FROM speed WHERE confident=0")[0]["n"]
+    total_b = store.query("SELECT COUNT(*) AS n FROM call_burst")[0]["n"]
+    print(f"artefatos de suspensão: {m} minutos e {b} de {total_b} rajadas")
+    print(f"medições de velocidade curtas demais para valer: {w}")
+    store.close()
+
+
 def cmd_marks(args, cfg):
     store = Store(cfg["db_path"])
     rows = store.query("SELECT ts, note FROM marks WHERE ts >= ? ORDER BY ts",
@@ -2288,6 +2610,8 @@ def main(argv=None):
     p.add_argument("note", nargs="*")
     p = sub.add_parser("marks", help="lista as marcações e o que o monitor viu em cada uma")
     p.add_argument("--days", type=float, default=7)
+    sub.add_parser("hops", help="mostra os saltos da rede local que seriam monitorados")
+    sub.add_parser("repair", help="remarca artefatos de suspensão no histórico")
     sub.add_parser("once", help="executa todas as medições uma vez e mostra o resultado")
     p = sub.add_parser("summary", help="resumo em texto")
     p.add_argument("--days", type=float, default=7)
@@ -2303,7 +2627,8 @@ def main(argv=None):
     cfg = load_config(args.config)
     {"run": cmd_run, "once": cmd_once, "summary": cmd_summary, "report": cmd_report,
      "export": cmd_export, "start": cmd_start, "stop": cmd_stop, "status": cmd_status,
-     "call": cmd_call, "mark": cmd_mark, "marks": cmd_marks}[args.cmd](args, cfg)
+     "call": cmd_call, "mark": cmd_mark, "marks": cmd_marks, "hops": cmd_hops,
+     "repair": cmd_repair}[args.cmd](args, cfg)
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ responder com dados, e não com impressão, a três perguntas:
 | Medição | Frequência padrão | Como | Custo de banda |
 |---|---|---|---|
 | Latência, jitter e perda de pacotes | a cada 60 s | 10 pings ICMP para 1.1.1.1, 8.8.8.8 e 9.9.9.9 em paralelo (fallback automático para TCP connect se o ICMP estiver bloqueado) | desprezível (~2 KB/min) |
-| Latência e perda até o roteador | a cada 60 s | mesmos pings para o gateway detectado automaticamente | desprezível |
+| Latência e perda nos saltos da rede local | a cada 60 s | mesmos pings para cada roteador da casa, descobertos sozinho com traceroute | desprezível |
 | Resolução DNS | a cada 5 min | tempo para resolver três nomes | desprezível |
 | Download | a cada 30 min | baixa até 10 MB (ou 12 s, o que vier antes) de speed.cloudflare.com | 10 MB |
 | Upload | a cada 30 min | envia 4 MB para speed.cloudflare.com | 4 MB |
@@ -36,12 +36,27 @@ cerca de 670 MB por dia ou 20 GB por mês. As proteções abaixo reduzem isso:
 Os pings feitos durante um teste de velocidade são marcados e excluídos das
 estatísticas de perda e latência, para não contaminar a medição.
 
-Uma nota sobre os números de velocidade: transferências curtas ficam um pouco
-abaixo de um teste completo do Speedtest, porque parte do tempo é gasta na
-aceleração inicial do TCP. Para a decisão que interessa, o que vale é a
-comparação entre horários e a variação ao longo dos dias, e para isso o método
-é consistente. Se quiser valores absolutos mais próximos do teste completo,
-aumente `download_bytes` e `upload_bytes` (e o custo de banda junto).
+**Onde a perda nasce.** Numa casa com roteador da operadora mais um mesh, há
+dois equipamentos entre o computador e a internet. O programa descobre os dois
+e mede cada um. Com isso o relatório separa sozinho três origens: perda já no
+primeiro salto (o Wi-Fi), perda entre os equipamentos da casa, e perda só
+depois de sair de casa (o provedor). Para fixar os endereços à mão, use o
+campo "Saltos da rede local" nas Configurações.
+
+**Quando o computador suspende.** O modo chamada grava uma linha por minuto
+mesmo quando nada responde, então falta de linhas significa processo parado, e
+não rede parada. Esses intervalos são detectados e marcados como artefato, sem
+apagar nada, para não virarem "travamentos" de horas. Deixe a suspensão em
+"Nunca" nas opções de energia para a cobertura ficar contínua.
+
+Uma nota sobre os números de velocidade: numa conexão rápida, um arquivo
+pequeno termina antes de o TCP acelerar, e o tempo até o primeiro byte domina
+a conta. Por isso a medição descarta o meio segundo inicial e, se ainda assim
+a janela medida ficar curta, o teste seguinte dobra de tamanho, até o limite
+de `max_download_bytes`. O intervalo entre testes é esticado sozinho para
+caber em `daily_budget_mb`, então aumentar o tamanho não aumenta o consumo.
+Medições feitas antes de a janela ser suficiente ficam marcadas, e o
+diagnóstico se recusa a julgar o plano enquanto elas dominarem a amostra.
 
 ## Instalação no Windows sem digitar nada
 
@@ -151,6 +166,8 @@ python netmon.py start        # inicia o monitor em segundo plano
 python netmon.py status       # confere se está rodando
 python netmon.py stop         # para
 python netmon.py call on      # liga o modo chamada (call off desliga)
+python netmon.py hops         # mostra os saltos da rede local que serão medidos
+python netmon.py repair       # remarca artefatos de suspensão no histórico
 ```
 
 Rodando a partir do código, `config.json`, banco e log ficam ao lado do
