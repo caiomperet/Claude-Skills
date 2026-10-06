@@ -230,11 +230,13 @@ log(`${brutas.length} ideias brutas geradas por ${geradas.filter(Boolean).length
 
 // ---------------------------------------------------------------- 2. seleção tolerante
 phase('Seleção')
-const cons = await agent(`${CAB}
+// Candidatas completas (com id, título e tese) pulam a consolidação e a seleção e preservam o contexto prévio.
+const prontas = Array.isArray(CFG.candidatas) && CFG.candidatas.length && CFG.candidatas.every(c => c && typeof c === 'object' && c.id && c.titulo && c.tese)
+const cons = prontas ? { ideias: CFG.candidatas } : await agent(`${CAB}
 Consolide as ideias abaixo. Se alguma vier só como descrição curta, complete os campos (tese, pagador, ativos, mecanismos de receita e margem) sem mudar a essência. Junte as duplicadas ou muito parecidas (mantendo a melhor formulação e registrando as lentes de origem), preserve as distintas e dê a cada uma um id curto (I01, I02...). Não descarte nenhuma ideia distinta e não avalie mérito.
 ${JSON.stringify(brutas)}`, { label: 'consolidador', phase: 'Seleção', schema: CONSOLIDADO })
 const candidatas = cons ? cons.ideias : []
-const sel = await agent(`${CAB}
+const sel = prontas ? { selecionadas: CFG.candidatas, excluidas: [] } : await agent(`${CAB}
 Seu papel: DIRETOR, na seleção inicial. Leia ${B}/agents/diretor.md (seção Na seleção inicial).
 Selecione até ${CFG.max_finalistas} candidatas para a pesquisa preliminar. Postura tolerante: exclua só o que viola as restrições do brief.
 Critérios de prioridade, nesta ordem: (1) potencial de subir os degraus; (2) proximidade do core, isto é, cliente atual e ativo ou competência atual (brief, seção 6: modelos com cliente novo e ativo novo ao mesmo tempo ganham penalidade); (3) presença de uma rota de aquisição de ativos cativos; (4) diversidade de temas. Considere fundir candidatas que compartilham cliente, ativo ou rota de aquisição.

@@ -4,10 +4,17 @@ Este arquivo é a fonte única de verdade sobre a missão. Todo agente o lê ant
 
 ## 1. A empresa
 
-Uma torreira global de grande porte, que hoje ganha dinheiro alugando espaço em torres (infraestrutura passiva) para operadoras de telefonia móvel.
+Uma torreira global de porte médio, que hoje ganha dinheiro alugando espaço em torres (infraestrutura passiva) para operadoras de telefonia móvel.
 
-- Referência de porte e desempenho: American Tower em 2025, com receita de US$ 10,6 bi e margem EBITDA ajustada de 67,0%.
-- Para os cálculos, a receita atual da empresa é o **índice 100**.
+**Referência de porte e desempenho: SBA Communications.**
+- Guidance para 2026: receita de US$ 2,84 a 2,89 bi e EBITDA ajustado de US$ 1,92 a 1,94 bi, o que dá uma margem de cerca de 67%. No 4º trimestre de 2025, a margem EBITDA ajustada foi de 67,8%.
+- Cerca de 44 mil sites: 17,4 mil nos EUA e 26,6 mil fora, com forte presença no Brasil, na América Central e na África.
+- Em 2025, comprou cerca de 7,1 mil torres da Millicom (Tigo) na América Central, por cerca de US$ 1 bi, em sale-leaseback com direito de construir até 2.500 novos sites. Também saiu de mercados pequenos: Filipinas, Colômbia e Canadá.
+- Tem um segmento de serviços de desenvolvimento de sites (construção e implantação).
+
+**Escala dos índices:**
+- A receita atual da empresa é o **índice 100**, ou cerca de US$ 2,85 bi.
+- **Cada ponto de índice vale cerca de US$ 28 mi.**
 - O core cresce cerca de **3% ao ano**: chega a cerca de 116 no ano 5 e cerca de 143 no ano 12, com margem EBITDA de cerca de 65%.
 
 ## 2. A meta: escada de degraus
@@ -18,10 +25,10 @@ Criar do zero um negócio do tamanho de um que levou mais de 30 anos para ser co
 
 | Marco | Receita (índice) | Margem EBITDA | O que precisa estar demonstrado |
 |---|---|---|---|
-| **Ano 3: tração** | 6 ou mais | 25% ou mais, com margem incremental de 55% ou mais | Pelo menos 2 clientes pagando pelo mesmo tipo de ativo; contratos de 5 anos ou mais |
-| **Ano 5: motor de crescimento** | 18 ou mais (mais receita nova do que o core gera em 5 anos, cerca de 16) | 45% ou mais | Trajetória crível até 60%; modelo repetível |
-| **Ano 8: segundo pilar** | 55 ou mais | 55% ou mais | Conversão de caixa e ROIC comparáveis aos das torres |
-| **Ano 12: paridade** | 143 ou mais (igual ao core) | 62% a 65% ou mais | Principal negócio da empresa |
+| **Ano 3: tração** | 6 ou mais (cerca de US$ 170 mi) | 25% ou mais, com margem incremental de 55% ou mais | Pelo menos 2 clientes pagando pelo mesmo tipo de ativo; contratos de 5 anos ou mais |
+| **Ano 5: motor de crescimento** | 18 ou mais (cerca de US$ 510 mi; mais receita nova do que o core gera em 5 anos, cerca de 16) | 45% ou mais | Trajetória crível até 60%; modelo repetível |
+| **Ano 8: segundo pilar** | 55 ou mais (cerca de US$ 1,6 bi) | 55% ou mais | Conversão de caixa e ROIC comparáveis aos das torres |
+| **Ano 12: paridade** | 143 ou mais (cerca de US$ 4,1 bi; igual ao core) | 62% a 65% ou mais | Principal negócio da empresa |
 
 Crescimento implícito em cada etapa:
 - Do ano 3 ao ano 5: cerca de 73% ao ano.
