@@ -180,13 +180,16 @@ const source = (slide, t) => txt(slide, t, { x: 0.6, y: 6.68, w: 12.1, h: 0.3, f
 
   // ---------------- 6. Evidence
   s = content("The numbers confirm the slowdown", S1);
-  s.addChart(pres.charts.BAR, [{ name: "Share price change", labels: ["S&P 500", "American Tower", "Crown Castle", "SBA"], values: [49, -2, -22, -29] }], {
-    x: 0.6, y: 1.5, w: 7.2, h: 4.9, barDir: "bar", chartColors: [HEX.accent2, HEX.accent4, HEX.accent4, HEX.accent4], invertedColors: [HEX.accent4],
-    showTitle: true, title: "Share price change since end of 2022 (%)", titleFontSize: 14, titleColor: HEX.dk2, titleFontFace: "+mn-lt",
+  s.addChart(pres.charts.BAR, [{ name: "Share price change", labels: ["American Tower", "Crown Castle", "SBA"], values: [-2, -22, -29] }], {
+    x: 0.6, y: 1.5, w: 7.2, h: 3.7, barDir: "bar", chartColors: [HEX.accent4],
+    showTitle: true, title: "Tower REIT share price change since end of 2022 (%)", titleFontSize: 14, titleColor: HEX.dk2, titleFontFace: "+mn-lt",
     showValue: true, dataLabelPosition: "outEnd", dataLabelFontSize: 14, dataLabelColor: HEX.dk2, dataLabelFontFace: "+mn-lt", dataLabelFormatCode: '0"%"',
     catAxisLabelColor: HEX.dk2, valAxisLabelColor: HEX.accent3, catAxisLabelFontSize: 13, valAxisLabelFontSize: 11, catAxisLabelFontFace: "+mn-lt", valAxisLabelFontFace: "+mn-lt",
-    valGridLine: { color: "DCE1E7", size: 0.5 }, catGridLine: { style: "none" }, showLegend: false, valAxisHidden: true, catAxisLabelPos: "low",
+    valGridLine: { color: "DCE1E7", size: 0.5 }, catGridLine: { style: "none" }, showLegend: false, valAxisHidden: true, catAxisLabelPos: "high",
   });
+  card(s, 0.6, 5.35, 7.2, 1.1, HEX.lt2, "S&P comparison card");
+  txt(s, "+49%", { x: 0.9, y: 5.45, w: 1.8, h: 0.9, fontSize: 32, bold: true, color: C.accent2, fontFace: THEME.headFontFace, valign: "middle" });
+  txt(s, "S&P 500 over the same period: the tower REITs lagged the market by 50 to 78 points", { x: 2.8, y: 5.45, w: 4.8, h: 0.9, fontSize: 14, color: C.text1, valign: "middle" });
   const stats = [["~4% to 0.5%", "American Tower 2026 organic growth, before and after removing DISH leases"], ["US$ 220M", "Crown Castle 2026 revenue hit from DISH terminations"], ["−2%", "Forecast change in global telecom capex in 2026"]];
   for (let i = 0; i < 3; i++) {
     const y = 1.5 + i * 1.65;
