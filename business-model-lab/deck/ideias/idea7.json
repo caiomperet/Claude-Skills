@@ -1,0 +1,131 @@
+{
+ "title_how": "Neutral gateways: satellite operators become tenants",
+ "flow": [
+  {
+   "step": "Select gateway sites",
+   "detail": "Screen large tower parcels with land, permits, grid power, fiber and low RF interference for gateway use"
+  },
+  {
+   "step": "Build shared compound",
+   "detail": "Prepare pads, power, backup, cooling, security and fiber meet-me room for 6-20 antenna positions per site"
+  },
+  {
+   "step": "Lease antenna positions",
+   "detail": "Rent pads to multiple LEO and D2D operators on 10+ year contracts with escalators, like a tower lease"
+  },
+  {
+   "step": "Add services and buy-ins",
+   "detail": "Sell power, cross-connects and remote hands; buy captive gateway networks via sale-leaseback"
+  }
+ ],
+ "payers": [
+  {
+   "who": "LEO broadband operators",
+   "pays_for": "Antenna pad rent, power and fiber cross-connects at gateways (e.g., Amazon Leo, OneWeb)"
+  },
+  {
+   "who": "D2D satellite operators",
+   "pays_for": "Gateways near MNO core networks, plus colocation of 3GPP ground equipment"
+  },
+  {
+   "who": "Mobile network operators",
+   "pays_for": "Interconnect and hosting of their D2D partner gateways next to their own sites"
+  },
+  {
+   "who": "EO and gov. satellite users",
+   "pays_for": "Shared antenna capacity and secure hosting for data downlink, often via GSaaS partners"
+  }
+ ],
+ "title_market": "LEO fleets need hundreds of new ground sites",
+ "stats": [
+  {
+   "value": "300+",
+   "label": "Ground stations Amazon Leo plans to install to connect its LEO constellation",
+   "source": "DCD (Dec 2025)"
+  },
+  {
+   "value": "US$ 82.7B",
+   "label": "Satellite ground station market by 2030, from US$ 41.0B in 2025; 15.1% CAGR, GSaaS fastest",
+   "source": "MarketsandMarkets"
+  },
+  {
+   "value": "US$ 17B",
+   "label": "SpaceX deal for EchoStar AWS-4/H-block spectrum to scale Starlink Direct to Cell",
+   "source": "The Register"
+  }
+ ],
+ "unit_economics": {
+  "unit": "Shared gateway compound (illustrative)",
+  "rows": [
+   {
+    "item": "Antenna positions per site",
+    "value": "12 (2-3 operators)"
+   },
+   {
+    "item": "Rent per position per year",
+    "value": "US$ 40-60k"
+   },
+   {
+    "item": "Power + cross-connect add-on",
+    "value": "+30% of rent"
+   },
+   {
+    "item": "Revenue per site per year",
+    "value": "~US$ 0.7-0.9M"
+   },
+   {
+    "item": "Capex per site / EBITDA margin",
+    "value": "US$ 4-6M / ~60%"
+   }
+  ],
+  "note": "Illustrative: reuses owned land and permits; 10-15y contracts; ~10% unlevered yield at full tenancy; excludes antennas owned by operators."
+ },
+ "title_plan": "From anchor tenant to global gateway platform",
+ "precedents": [
+  {
+   "name": "American Tower - AST SpaceMobile",
+   "what": "2022 term sheet for AST gateway equipment on American Tower sites and data centers under a global master lease, plus managed services",
+   "source": "AST SpaceMobile SEC filing"
+  },
+  {
+   "name": "Telstra - OneWeb teleports",
+   "what": "Ten-year agreement for Telstra to build, host and run three OneWeb gateway teleports in Australia with 24/7 monitoring",
+   "source": "Telstra / Business Wire"
+  },
+  {
+   "name": "KSAT and AWS Ground Station",
+   "what": "Shared-antenna models: KSAT runs 260+ antennas at 26 sites; AWS rents antenna time per minute to many satellite operators",
+   "source": "KSAT; Amazon press"
+  }
+ ],
+ "plan": [
+  {
+   "phase": "Years 0-1: Anchor",
+   "milestones": "Map 50 candidate sites in US, Brazil, Africa; sign one anchor LEO or D2D operator; build 2-3 pilot compounds"
+  },
+  {
+   "phase": "Years 2-3: Multi-tenant",
+   "milestones": "Second operator on same sites; standard master lease; 20+ compounds; first captive gateway sale-leaseback"
+  },
+  {
+   "phase": "Years 4-5: Platform",
+   "milestones": "60+ compounds across regions; GSaaS partnerships; bundle with edge data centers and fiber for backhaul"
+  }
+ ],
+ "kpis": [
+  "Antenna positions leased and tenants per compound",
+  "Revenue per compound and annual escalator",
+  "Weighted average remaining contract term (years)",
+  "Yield on capex per compound (target 10%+)"
+ ],
+ "sources": [
+  "DCD - Amazon Leo reveals plans for installation of more than 300 ground stations - https://www.datacenterdynamics.com/en/news/amazon-leo-reveals-plans-for-installation-of-more-than-300-ground-stations/",
+  "MarketsandMarkets - Satellite Ground Station Market worth $82.72 billion by 2030 - https://www.webull.com/news/13957181077505024",
+  "The Register - SpaceX bulks up Starlink Direct to Cell with $17B EchoStar spectrum deal - https://www.theregister.com/2025/09/09/spacex_echostar_spectrum_deal/",
+  "AST SpaceMobile 10-Q Q1 2022 (American Tower term sheet) - https://www.sec.gov/Archives/edgar/data/1780312/000095017022010115/asts-ast_spacemobile_q1_2022.pdf",
+  "Business Wire - Telstra to deliver teleport services for OneWeb in Australia - https://www.businesswire.com/news/home/20220322005537/en",
+  "KSAT - Company presentation - https://www.ksat.no/globalassets/ksat/documents/-company-presentation.pdf",
+  "Amazon - AWS announces AWS Ground Station - https://press.aboutamazon.com/2018/11/amazon-web-services-announces-aws-ground-station",
+  "DCD - Amazon Leo files for three new 6-antenna ground stations - https://www.datacenterdynamics.com/en/news/amazon-leo-files-for-three-new-6-antenna-ground-stations-in-florida-minnesota-and-texas/"
+ ]
+}

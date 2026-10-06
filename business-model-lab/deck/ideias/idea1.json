@@ -1,0 +1,134 @@
+{
+ "title_how": "How it works: a second payer on sites we already own",
+ "flow": [
+  {
+   "step": "Map spare capacity",
+   "detail": "Score all ~44k sites for spare ground, structure load, grid power and fiber; publish a site catalog"
+  },
+  {
+   "step": "Sign master agreements",
+   "detail": "10-15 year MLAs per industry with annual escalators, standard site fees and pre-approved designs"
+  },
+  {
+   "step": "Tenant installs and owns",
+   "detail": "Payer funds and owns its radios, gateways or batteries; we handle permits, access and site build"
+  },
+  {
+   "step": "Operate and upsell",
+   "detail": "Same 24/7 site ops, monitoring and billing as tower leases; add sites and amendments over the term"
+  }
+ ],
+ "payers": [
+  {
+   "who": "Electric utilities",
+   "pays_for": "Antenna space for private LTE, smart-meter backhaul and grid sensors"
+  },
+  {
+   "who": "Battery storage developers",
+   "pays_for": "Ground space and grid-adjacent land for small distribution-level BESS"
+  },
+  {
+   "who": "Private networks and IoT",
+   "pays_for": "Coverage sites for agribusiness, mining, ports and public safety networks"
+  },
+  {
+   "who": "LEO satellite operators",
+   "pays_for": "Secure, fiber-fed ground space and power for gateway antennas"
+  }
+ ],
+ "title_market": "Market and economics: new payers, tower-like margins",
+ "stats": [
+  {
+   "value": "112 GW",
+   "label": "Battery storage installed worldwide in 2025 (307 GWh), up 48% vs 2024",
+   "source": "BloombergNEF"
+  },
+  {
+   "value": "US$8.9 bn",
+   "label": "Forecast 2029 market for private LTE/5G networks (utilities, mining, ports, industry)",
+   "source": "Berg Insight"
+  },
+  {
+   "value": "A$30k/ha",
+   "label": "Yearly rent offered to landholders hosting 5 MW batteries on 1 hectare, 30-year terms",
+   "source": "pv magazine Australia"
+  }
+ ],
+ "unit_economics": {
+  "unit": "Per site, per tenant (illustrative)",
+  "rows": [
+   {
+    "item": "Structure tenant rent (utility, IoT)",
+    "value": "US$800-1,500 per month"
+   },
+   {
+    "item": "Ground/power pad rent (BESS, gateway)",
+    "value": "US$10-30k per year"
+   },
+   {
+    "item": "Annual escalator",
+    "value": "2-3%"
+   },
+   {
+    "item": "Capex by us",
+    "value": "Near zero; tenant pays"
+   },
+   {
+    "item": "Incremental EBITDA margin",
+    "value": "~85-90%"
+   }
+  ],
+  "note": "Illustrative; assumes existing compound and power, tenant-funded equipment and mods, 10-15 yr term, opex limited to site ops and billing."
+ },
+ "title_plan": "Proof points and a 36-month plan",
+ "precedents": [
+  {
+   "name": "Crown Castle + Anterix TowerX (2025)",
+   "what": "Turnkey product giving US utilities pre-negotiated access to Crown Castle's 40,000+ towers for 900 MHz private LTE grid networks",
+   "source": "Anterix / Utility Dive"
+  },
+  {
+   "name": "Arqiva hosts Starlink gateways (UK)",
+   "what": "Broadcast and tower infrastructure owner won the contract to host Starlink ground station gateways at its UK sites and carry traffic",
+   "source": "Advanced Television"
+  },
+  {
+   "name": "Cellnex UK + Netmore (2024)",
+   "what": "LoRaWAN gateways placed on ~200 Cellnex poles to support smart water meter rollouts for UK regional water utilities",
+   "source": "Business Wire / RCR Wireless"
+  }
+ ],
+ "plan": [
+  {
+   "phase": "Months 0-12: Prove",
+   "milestones": "Site catalog live; 2 anchor MLAs (one utility, one BESS or IoT); 50-100 non-carrier tenancies in US and Brazil"
+  },
+  {
+   "phase": "Months 12-24: Standardize",
+   "milestones": "Productized offers per industry; channel deals with network integrators and satellite firms; 500+ tenancies"
+  },
+  {
+   "phase": "Months 24-36: Scale",
+   "milestones": "Roll out to Central America and Africa; 2+ payers per asset type; 1,500+ tenancies on 5-10 year contracts"
+  }
+ ],
+ "kpis": [
+  "Non-carrier tenancies signed and billing",
+  "Non-carrier revenue as % of site leasing revenue",
+  "Average contract term and escalator",
+  "Incremental EBITDA margin on non-carrier rent"
+ ],
+ "sources": [
+  "BloombergNEF confirms energy storage has reached the 100 GW era (pv magazine, May 2026) - https://www.pv-magazine.com/?p=69000",
+  "Berg estimates private LTE/5G market (Mobile Europe) - https://www.mobileeurope.co.uk/berg-estimates-private-lte-5g-market-will-reach-8-9bn-in-2029/",
+  "Landholders scoop $30,000 per hectare per year to host 5 MW batteries (pv magazine Australia) - https://www.pv-magazine-australia.com/?p=14107",
+  "Anterix launches utility tower access product with Crown Castle (Anterix) - https://investors.anterix.com/news-releases/news-release-details/anterix-launches-groundbreaking-utility-tower-access-product",
+  "Anterix TowerX press release (Utility Dive) - https://www.utilitydive.com/press-release/20251114-anterix-launches-groundbreaking-utility-tower-access-product-with-crown-cas-1/",
+  "Arqiva wins Musk's Starlink services (Advanced Television) - https://advanced-television.com/?p=173583",
+  "Netmore and Cellnex UK partner to deploy LoRaWAN network (Business Wire, Oct 2024) - https://www.businesswire.com/news/home/20241022934926/en/Netmore-and-Cellnex-UK-Partner-to-Deploy-and-Densify-UK-LoRaWAN-Network-Using-Streetworks-Monopole-Infrastructure",
+  "Netmore puts LoRaWAN on Cellnex poles for UK smart meter rollout (RCR Wireless) - https://www.rcrwireless.com/20241030/uncategorized/netmore-puts-lorawan-on-cellnex-poles-for-uk-smart-meter-rollout",
+  "Battery storage land lease: what landowners should know (escalators 2-3%) - https://legalclarity.org/battery-storage-land-lease-what-landowners-should-know/",
+  "Utilities sector to invest $2B in private 5G/4G by 2026, SNS Telecom & IT (Edge IR) - https://edgeir.com/utilities-sector-to-invest-2b-in-private-5g-4g-by-2026-sns-telecom-it-report-says-20231030",
+  "Business clinic: is a battery storage offer a good deal (Farmers Weekly) - https://www.fwi.co.uk/business/business-management/business-clinic/business-clinic-is-battery-storage-offer-a-good-deal"
+ ]
+}

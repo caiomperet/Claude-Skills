@@ -213,7 +213,7 @@ const source = (slide, t) => txt(slide, t, { x: 0.6, y: 6.68, w: 12.1, h: 0.3, f
   const demand = [
     ["FaBolt", "Energy", "Up to 32% of 5G network cost, from 23% in 4G"],
     ["FaBuilding", "Indoor coverage", "In-building wireless: ~US$ 25B (2026) to ~US$ 48B (2032)"],
-    ["FaMicrochip", "Edge and AI at sites", "AI-RAN: US$ 200B+ cumulative by 2030; T-Mobile retrofitting 13k sites"],
+    ["FaMicrochip", "Edge and AI at sites", "AI-RAN: US$ 200B+ cumulative by 2030; carriers piloting with Nvidia and Nokia"],
     ["FaSatellite", "Satellite integration", "LEO direct-to-device needs gateways with land, power and fiber"],
   ];
   for (let i = 0; i < 4; i++) {
@@ -342,62 +342,133 @@ const source = (slide, t) => txt(slide, t, { x: 0.6, y: 6.68, w: 12.1, h: 0.3, f
     return sl;
   }
 
-  s = await ideaSlide(1, 1, "Idea 1: Our sites as a multi-industry platform", "FaLayerGroup",
-    "Sell ground space, structure space and power capacity on our ~44k existing sites to payers that are not mobile carriers, under 10 to 15 year master agreements with escalators. The tenant installs and owns its equipment, exactly as on a tower.",
-    "Utilities (grid automation, smart metering), battery storage developers, private networks (agribusiness, mining, ports), satellite operators",
-    "Ground lease and capacity fees per site, power upgrade fees, master agreements by industry",
-    "Land, permits, access, security and grid connection already paid for and in place across the Americas and Africa",
-    "Recreates the core economics (a second payer on a paid-for asset) with near-zero capex, and turns satellite from a threat into a tenant",
-    "Precedent study, then 3 pilot agreements: a utility, a storage developer, a satellite operator",
-    null);
-  s.addNotes("This is the purest tower economics of all ideas: no purchase price, minimal capex, high incremental margin. Its revenue pool starts small, so it is the foundation, not the whole answer.");
-
-  s = await ideaSlide(2, 1, "Idea 2: Energy-as-a-Service with shared batteries", "FaBolt",
-    "Buy the carriers' captive backup batteries and generators (sale-leaseback), upgrade them to lithium and sell backup-as-a-service with an availability SLA. Aggregate tens of thousands of sites into a virtual power plant that sells capacity and grid services.",
-    "Carriers (backup service fee), grid operators and utilities (capacity and ancillary services), storage aggregators",
-    "10-year backup-as-a-service fee per site, 7 to 15 year capacity contracts, grid services revenue",
-    "We already manage power at scale on every site and have master agreements with every carrier",
-    "Attacks the carriers' biggest controllable cost (energy, up to 32% of 5G network cost) and one of the largest revenue pools tested",
-    "Pilot with one carrier in one market: buy the backup fleet of ~500 sites and register it as a grid resource",
-    "Source: GSMA, 5G-era mobile network cost evolution (energy share of TCO).");
-  s.addNotes("Energy is the operators' number one pain. Owning the battery layer makes us their energy partner and opens a second customer, the grid, for the same asset.");
-
-  s = await ideaSlide(3, 2, "Idea 3: Carrier real-estate sale-leaseback (HubCo)", "FaBuilding",
-    "Buy the carriers' technical buildings (switching centers, aggregation hubs), lease back only the space and power they use for 15 years, and turn the rest into neutral interconnection and edge capacity. Optionally extend the playbook to utility poles and street lighting.",
-    "Selling carrier (anchor lease), other carriers, regional fiber providers, CDNs, cloud and AI inference providers",
-    "Rent per kW and per rack, interconnection fees, 15-year anchor lease with escalators",
-    "Sale-leaseback is our core skill; SBA just did it with Millicom (~7.1k towers, ~US$ 1B) and holds the relationship",
-    "The same move that built tower scale, applied to a new captive asset that carriers want to monetize as networks virtualize",
-    "Map captive building portfolios with existing carrier partners and price one portfolio, starting with Millicom",
-    "Sources: SBA 2025 filings (Millicom transaction); American Tower/CoreSite and Telxius precedents.");
-  s.addNotes("This was rated the strongest idea from a fit perspective in the second round: current customer, clear acquisition route. It is a pipeline play: value depends on buying well.");
-
-  s = await ideaSlide(4, 2, "Idea 4: Powered land for AI and the grid", "FaPlug",
-    "Acquire captive grid connections and powered land, and lease megawatts of connected capacity to several tenants: data centers, grid batteries and electric fleet depots. Deliver land, power, basic cooling, security and fiber; tenants bring their own equipment.",
-    "Hyperscalers and AI neoclouds, battery storage developers, electric bus and logistics fleets",
-    "Rent per contracted kW over 10 to 15 years, interconnection fees, ground leases",
-    "Infrastructure M&A, energy management, long-dated capital and a global footprint",
-    "Grid connections are the new scarce permit, as tower zoning once was; AI demand makes this the largest market tested",
-    "Screen 2 to 3 acquirable platforms with contracted capacity, and a joint venture partner for capital",
-    "Context: data-center vacancy near record lows and multi-year grid connection queues (preliminary research).");
-  s.addNotes("This idea has the largest upside but the heaviest capital. The tower lesson that applies is scarcity: whoever controls connected, permitted land controls the market.");
-
-  // ---------------- tier 3 options
-  s = content("Strategic options to keep warm", S3);
-  const opts = [
-    ["FaHandshake", "5. Acquire a multi-tenant platform", "Buy a ready-made platform (data center, fiber or indoor network) with existing tenants, as American Tower did with CoreSite. The fastest route to scale."],
-    ["FaMicrochip", "6. Edge and AI-RAN compute hubs", "Prefabricated powered pods at aggregation sites for AI inference and AI-RAN, leased per kW. An option on the 6G cycle around 2030."],
-    ["FaSatellite", "7. Neutral satellite gateways", "Shared ground stations for LEO and direct-to-device constellations on large sites, rented per antenna position. A hedge against satellite disruption."],
+  // ---------------- idea deep dives (3 slides each)
+  const fs = require("fs");
+  const IDIR = process.env.IDEAS_DIR;
+  const IDEAS = [
+    { n: 1, tier: 1, short: "Site platform", ic: "FaLayerGroup", title: "Idea 1: Our sites as a multi-industry platform",
+      what: "Sell ground space, structure space and power capacity on our ~44k existing sites to payers that are not mobile carriers, under 10 to 15 year master agreements with escalators. The tenant installs and owns its equipment, exactly as on a tower.",
+      revenue: "Ground lease and capacity fees per site, power upgrade fees and master agreements by industry, with annual escalators",
+      why: "Land, permits, access, security and grid connection are already paid for and in place across the Americas and Africa.",
+      potential: "Recreates the core economics, a second payer on a paid-for asset, with near-zero capex. Turns satellite from a threat into a tenant.",
+      notes: "The purest tower economics of all ideas: no purchase price, minimal capex, high incremental margin. It starts small, so it is the foundation, not the whole answer." },
+    { n: 2, tier: 1, short: "Energy-as-a-Service", ic: "FaBolt", title: "Idea 2: Energy-as-a-Service with shared batteries",
+      what: "Buy the carriers' captive backup batteries and generators (sale-leaseback), upgrade them to lithium and sell backup-as-a-service with an availability SLA. Aggregate thousands of sites into a virtual power plant that sells capacity and grid services.",
+      revenue: "10-year backup-as-a-service fee per site, 7 to 15 year capacity contracts and grid services revenue",
+      why: "We already manage power at scale on every site and hold master agreements with every carrier.",
+      potential: "Attacks the carriers' biggest controllable cost, energy, and adds the grid as a second customer for the same asset.",
+      notes: "Energy is the operators' number one pain. Owning the battery layer makes us their energy partner and opens a second customer, the grid, for the same asset." },
+    { n: 3, tier: 2, short: "HubCo", ic: "FaBuilding", title: "Idea 3: Carrier real-estate sale-leaseback (HubCo)",
+      what: "Buy the carriers' technical buildings (switching centers, aggregation hubs), lease back only the space and power they use for 15 years, and turn the rest into neutral interconnection and edge capacity. Optionally extend to utility poles and street lighting.",
+      revenue: "Rent per kW and per rack, interconnection fees and a 15-year anchor lease with escalators",
+      why: "Sale-leaseback is our core skill. SBA just did it with Millicom (~7.1k towers, ~US$ 1B) and holds the relationship.",
+      potential: "The same move that built tower scale, applied to a new captive asset that carriers want to monetize as networks virtualize.",
+      notes: "The strongest fit in the review: current customer and a clear acquisition route. A pipeline play: value depends on buying well." },
+    { n: 4, tier: 2, short: "Powered land", ic: "FaPlug", title: "Idea 4: Powered land for AI and the grid",
+      what: "Acquire captive grid connections and powered land, and lease megawatts of connected capacity to several tenants: data centers, grid batteries and electric fleet depots. We deliver land, power, security and fiber; tenants bring their own equipment.",
+      revenue: "Rent per contracted kW over 10 to 15 years, interconnection fees and ground leases",
+      why: "Infrastructure M&A, energy management, long-dated capital and a global footprint.",
+      potential: "Grid connections are the new scarce permit, as tower zoning once was. AI demand makes this the largest market tested.",
+      notes: "The largest upside but the heaviest capital. The tower lesson that applies is scarcity: whoever controls connected, permitted land controls the market." },
+    { n: 5, tier: 3, short: "Platform acquisition", ic: "FaHandshake", title: "Idea 5: Acquire a multi-tenant platform",
+      what: "Buy a ready-made platform that already has multi-tenant economics, such as an interconnection-rich data center group, a dark fiber network or a neutral-host indoor network, and grow it with our capital and customer relationships.",
+      revenue: "The acquired platform's recurring rents and interconnection fees, grown through cross-selling to our carrier base",
+      why: "REIT access to capital, a proven M&A and integration engine, and executive relationships with every major carrier.",
+      potential: "The only route proven to build a second pillar at speed: American Tower did it with CoreSite in 2021.",
+      notes: "This is the fastest route to scale. Discipline on price and on platform fit with our customers is what makes or breaks it." },
+    { n: 6, tier: 3, short: "Edge and AI-RAN hubs", ic: "FaMicrochip", title: "Idea 6: Edge and AI-RAN compute hubs",
+      what: "Install prefabricated powered pods at selected aggregation sites and lease them per kW, with space, power, cooling, fiber and security, to carriers running AI-RAN and pooled baseband, AI inference providers and CDNs. We own the shell, not the GPUs.",
+      revenue: "Rent per contracted kW, space fees per pod and interconnection fees between tenants",
+      why: "Sites with power, fiber and permits close to users, plus master agreements with the carriers that will run AI-RAN.",
+      potential: "Positions the company inside the AI-RAN and 6G cycle around 2030 instead of watching it from the outside.",
+      notes: "An option on the next technology cycle. Start with a few hubs alongside a carrier anchor and scale only with signed demand." },
+    { n: 7, tier: 3, short: "Satellite gateways", ic: "FaSatellite", title: "Idea 7: Neutral satellite gateways",
+      what: "Build shared ground stations on large sites for LEO broadband and direct-to-device constellations. Several satellite operators install antennas in one compound and pay per antenna position, plus power and cross-connect fees.",
+      revenue: "Rent per antenna position on 10 to 15 year contracts, power and fiber cross-connect fees",
+      why: "Large sites with land, permits, power, fiber and security, spread across the Americas and Africa.",
+      potential: "Turns the satellite disruption threat into a tenant and hedges the rural tower base.",
+      notes: "A hedge: if direct-to-device grows, we earn from it. Start with one operator anchor and a shared-compound design." },
   ];
-  for (let i = 0; i < 3; i++) {
-    const x = 0.6 + i * 4.1;
-    card(s, x, 1.5, 3.85, 4.9, HEX.lt2, "Option card " + (i + 5));
-    await iconCircle(s, opts[i][0], x + 0.3, 1.8, 0.9, HEX.accent5, HEX.dk2, opts[i][1]);
-    txt(s, opts[i][1], { x: x + 0.3, y: 2.95, w: 3.3, h: 0.9, fontSize: 18, bold: true, color: C.text2, fontFace: THEME.headFontFace });
-    txt(s, opts[i][2], { x: x + 0.3, y: 3.9, w: 3.3, h: 2.4, fontSize: 14, color: C.text1 });
+  const kicker = (I) => `Idea ${I.n}  |  ${I.short}`;
+  const allSources = [];
+
+  for (const I of IDEAS) {
+    const D = JSON.parse(fs.readFileSync(`${IDIR}/idea${I.n}.json`, "utf8"));
+    const SHORT_TITLES = { 1: "New payers with tower-like margins", 5: "Platform deals are large, pricey and can grow", 6: "AI-RAN and edge pull power to the cell edge" };
+    if (SHORT_TITLES[I.n]) D.title_market = SHORT_TITLES[I.n];
+    allSources.push({ I, list: D.sources || [] });
+    const tc = tierCol[I.tier];
+
+    // ----- A. Overview and operating model
+    let sl = content(I.title, S3);
+    await iconCircle(sl, I.ic, 0.6, 1.5, 0.85, tc, HEX.dk2, I.short);
+    txt(sl, [{ text: `${tierName[I.tier]}  |  What it is`, options: { bold: true, color: C.accent3, fontSize: 13, breakLine: true } }, { text: I.what, options: { color: C.text1 } }],
+      { x: 1.65, y: 1.45, w: 11.05, h: 1.25, fontSize: 15 });
+    txt(sl, "How it works", { x: 0.6, y: 2.85, w: 6, h: 0.35, fontSize: 16, bold: true, color: C.text2 });
+    for (let k = 0; k < 4; k++) {
+      const x = 0.6 + k * 3.1;
+      card(sl, x, 3.2, 2.85, 1.88, HEX.lt2, `Step ${k + 1}`);
+      txt(sl, [{ text: `${k + 1}  ${D.flow[k].step}`, options: { bold: true, color: C.text2, fontSize: 15, breakLine: true } }, { text: D.flow[k].detail, options: { color: C.text1, fontSize: 14 } }],
+        { x: x + 0.15, y: 3.28, w: 2.58, h: 1.75 });
+      if (k < 3) sl.addShape(pres.shapes.CHEVRON, { x: x + 2.88, y: 3.95, w: 0.18, h: 0.4, fill: { color: tc }, line: { color: tc }, objectName: `Flow arrow ${k + 1}` });
+    }
+    for (const [k, head, body] of [[0, "Why us", I.why], [1, "Why it can transform", I.potential]]) {
+      const x = 0.6 + k * 6.2;
+      card(sl, x, 5.25, 5.95, 1.3, HEX.dk2, head + " card");
+      txt(sl, [{ text: head, options: { bold: true, color: C.accent1, fontSize: 15, breakLine: true } }, { text: body, options: { color: C.background1, fontSize: 14 } }],
+        { x: x + 0.25, y: 5.33, w: 5.45, h: 1.15 });
+    }
+    sl.addNotes(I.notes);
+
+    // ----- B. Who pays and market signals
+    sl = content(D.title_market, S3);
+    txt(sl, "Who pays", { x: 0.6, y: 1.45, w: 6, h: 0.35, fontSize: 16, bold: true, color: C.text2 });
+    for (let k = 0; k < 4; k++) {
+      const y = 1.9 + k * 1.0;
+      sl.addShape(pres.shapes.OVAL, { x: 0.6, y: y + 0.08, w: 0.36, h: 0.36, fill: { color: tc }, line: { color: tc }, objectName: `Payer marker ${k + 1}` });
+      txt(sl, String(k + 1), { x: 0.6, y: y + 0.08, w: 0.36, h: 0.36, fontSize: 13, bold: true, color: C.text2, align: "center", valign: "middle" });
+      txt(sl, [{ text: D.payers[k].who, options: { bold: true, color: C.text2, fontSize: 15, breakLine: true } }, { text: D.payers[k].pays_for, options: { color: C.text1, fontSize: 14 } }],
+        { x: 1.15, y, w: 5.3, h: 0.95 });
+    }
+    card(sl, 0.6, 5.95, 5.85, 0.6, HEX.lt2, "Revenue model card");
+    txt(sl, [{ text: "How it earns: ", options: { bold: true, color: C.text2 } }, { text: I.revenue, options: { color: C.text1 } }], { x: 0.8, y: 6.0, w: 5.5, h: 0.5, fontSize: 13, valign: "middle" });
+    txt(sl, "Market signals", { x: 6.85, y: 1.45, w: 5.9, h: 0.35, fontSize: 16, bold: true, color: C.text2 });
+    for (let k = 0; k < 3; k++) {
+      const y = 1.9 + k * 1.57;
+      card(sl, 6.85, y, 5.9, 1.42, HEX.lt2, `Stat card ${k + 1}`);
+      txt(sl, D.stats[k].value, { x: 7.05, y: y + 0.12, w: 5.5, h: 0.55, fontSize: 26, bold: true, color: C.accent2, fontFace: THEME.headFontFace });
+      txt(sl, D.stats[k].label, { x: 7.05, y: y + 0.7, w: 5.5, h: 0.65, fontSize: 14, color: C.text1 });
+    }
+    source(sl, `${kicker(I)}   ·   Sources: ${[...new Set(D.stats.map(x => x.source))].join("; ")}.`);
+    sl.addNotes(`Who pays and the market signals behind ${I.short}.`);
+
+    // ----- C. Economics, precedents and plan
+    sl = content(D.title_plan, S3);
+    card(sl, 0.6, 1.45, 5.75, 3.4, HEX.lt2, "Economics card");
+    txt(sl, [{ text: "Illustrative economics", options: { bold: true, color: C.text2, fontSize: 16, breakLine: true } }, { text: D.unit_economics.unit, options: { color: C.accent3, fontSize: 12 } }],
+      { x: 0.8, y: 1.55, w: 5.35, h: 0.65 });
+    sl.addTable(D.unit_economics.rows.map((r, k) => [
+      { text: r.item, options: { color: HEX.dk1, bold: false } },
+      { text: r.value, options: { color: HEX.dk2, bold: true, align: "right" } },
+    ]), { x: 0.8, y: 2.2, w: 5.35, colW: [3.0, 2.35], rowH: 0.3, fontSize: 12, fontFace: THEME.bodyFontFace, border: { type: "solid", pt: 0.5, color: "D3DAE2" }, fill: { color: "FFFFFF" }, margin: 0.05, objectName: "Economics table" });
+    txt(sl, D.unit_economics.note, { x: 0.8, y: 4.3, w: 5.35, h: 0.5, fontSize: 10, italic: true, color: C.accent3 });
+    txt(sl, "Precedents", { x: 6.65, y: 1.45, w: 6.1, h: 0.35, fontSize: 16, bold: true, color: C.text2 });
+    for (let k = 0; k < 3; k++) {
+      const y = 1.85 + k * 0.95;
+      txt(sl, [{ text: D.precedents[k].name, options: { bold: true, color: C.text2, fontSize: 14, breakLine: true } }, { text: D.precedents[k].what, options: { color: C.text1, fontSize: 13 } }],
+        { x: 6.65, y, w: 6.1, h: 0.92 });
+    }
+    const steps = D.plan.map(p => [p.phase, p.milestones]).concat([["KPIs to track", D.kpis.slice(0, 3).join("\n")]]);
+    for (let k = 0; k < 4; k++) {
+      const x = 0.6 + k * 3.05;
+      const dark = k === 3;
+      card(sl, x, 5.0, 2.9, 1.6, dark ? HEX.dk2 : HEX.lt2, `Plan card ${k + 1}`);
+      txt(sl, [{ text: steps[k][0], options: { bold: true, color: dark ? C.accent1 : C.text2, fontSize: 14, breakLine: true } }, { text: steps[k][1], options: { color: dark ? C.background1 : C.text1, fontSize: 12 } }],
+        { x: x + 0.15, y: 5.06, w: 2.6, h: 1.5 });
+    }
+    source(sl, `${kicker(I)}   ·   Precedent sources: ${[...new Set(D.precedents.map(x => x.source))].join("; ")}. Economics are illustrative.`);
+    sl.addNotes(`Economics, precedents and the first steps for ${I.short}. Figures marked illustrative are working assumptions to validate.`);
   }
-  source(s, "Sources: American Tower (CoreSite, 2021); Nokia and Nvidia AI-RAN plans (2026); KSAT and AWS Ground Station as shared-gateway precedents.");
-  s.addNotes("These options need either a large acquisition or a technology cycle that is still forming. Keep them on the radar with low-cost monitoring and partnerships.");
 
   // ================================================================ Closing
   pres.addSection({ title: "Next steps" });
@@ -440,6 +511,20 @@ const source = (slide, t) => txt(slide, t, { x: 0.6, y: 6.68, w: 12.1, h: 0.3, f
     "Norton Rose Fulbright, Capacity and TowerXchange: tower sharing models and sale-leaseback structures",
     "Christensen; O'Reilly and Tushman; Zook (Bain); McKinsey business-building research",
   ].map((t, i, a) => ({ text: t, options: { bullet: true, breakLine: i < a.length - 1 } })), { x: 0.6, y: 1.5, w: 12.1, h: 5.2, fontSize: 14, color: C.text1, paraSpaceAfter: 6 });
+
+  // ---------------- Appendix: idea sources
+  const lines = [];
+  for (const { I, list } of allSources) {
+    lines.push({ text: `Idea ${I.n}: ${I.short}`, options: { bold: true, color: C.text2, fontSize: 12, breakLine: true } });
+    for (const src of list) lines.push({ text: src, options: { color: C.text1, fontSize: 10, breakLine: true } });
+  }
+  const PER = 15;
+  for (let p = 0, page = 1; p < lines.length; p += PER, page++) {
+    const chunk = lines.slice(p, p + PER);
+    chunk[chunk.length - 1] = { text: chunk[chunk.length - 1].text, options: { ...chunk[chunk.length - 1].options, breakLine: false } };
+    const ap = content(`Appendix: idea sources (${page})`, "Next steps");
+    txt(ap, chunk, { x: 0.6, y: 1.4, w: 12.1, h: 5.5, fontSize: 10, paraSpaceAfter: 2 });
+  }
 
   await pres.writeFile({ fileName: OUT });
   await applyTheme(OUT, THEME);

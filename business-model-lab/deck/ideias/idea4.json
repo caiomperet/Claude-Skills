@@ -1,0 +1,59 @@
+{
+ "title_how": "Powered land: lease megawatts, not just ground",
+ "flow": [
+  {"step": "Secure grid capacity", "detail": "Buy sites with existing or queued interconnection: retired plants, substation-adjacent land, utility surplus"},
+  {"step": "Entitle and prepare", "detail": "Zoning, substation tie-in, cooling-ready pads, water rights, fiber laterals and perimeter security"},
+  {"step": "Lease MW to tenants", "detail": "Long-term ground and capacity leases per MW to data centers, BESS and EV fleet depots; tenants bring kit"},
+  {"step": "Operate and densify", "detail": "Collect escalating rent, add tenants on spare MW and upsell fiber, security and power upgrades"}
+ ],
+ "payers": [
+  {"who": "Data centers and AI neoclouds", "pays_for": "Speed to power: energized MW and pads years ahead of the utility queue, on 15-20 yr leases"},
+  {"who": "Grid battery (BESS) owners", "pays_for": "Ground lease per installed MW next to a substation, with a ready grid connection"},
+  {"who": "Bus and logistics fleets", "pays_for": "Depot land with high-capacity charging connection near urban routes, leased per MW or slot"},
+  {"who": "Fiber and edge carriers", "pays_for": "Rights of way, conduit and colocation on campus to serve the anchor tenants"}
+ ],
+ "title_market": "Power, not land, is the new scarce permit",
+ "stats": [
+  {"value": "~2,300 GW", "label": "Generation and storage capacity waiting in US interconnection queues at end-2024", "source": "LBNL Queued Up 2025"},
+  {"value": "1.4%", "label": "Record-low vacancy in North American primary data center markets, H1 2026", "source": "CBRE H1 2026"},
+  {"value": "80.4%", "label": "Share of 7,481 MW of data center capacity under construction already preleased, H1 2026", "source": "CBRE H1 2026"}
+ ],
+ "unit_economics": {
+  "unit": "One 100 MW powered-land campus",
+  "rows": [
+   {"item": "Site + interconnection cost", "value": "~US$ 30M (US$ 0.3M/MW)"},
+   {"item": "Pads, substation share, fiber", "value": "~US$ 20M"},
+   {"item": "Lease rate", "value": "~US$ 50k per MW per year"},
+   {"item": "Annual rent at full lease-up", "value": "~US$ 5M, with escalators"},
+   {"item": "EBITDA margin / cash yield", "value": "~85% / ~8.5% on cost"}
+  ],
+  "note": "Illustrative. Site cost anchored on MARA Texas deal (up to US$600M for 2 GW); rent, capex and margin are assumptions in line with ground leases."
+ },
+ "title_plan": "Precedents and a 3-phase entry plan",
+ "precedents": [
+  {"name": "Tract (US powered-land developer)", "what": "Assembles land, power, fiber and water, then sells or leases powered sites to hyperscalers; 25k+ acres and 25+ GW planned", "source": "Data Center Frontier"},
+  {"name": "MARA buys 2 GW Texas site (2026)", "what": "Acquired a 1,200-acre powered site with rights to up to 2 GW for up to US$600M (~US$0.3M/MW), partnering with Starwood", "source": "The Energy Mag"},
+  {"name": "Homer City, Pennsylvania", "what": "Retired 1.9 GW coal plant reused as a 3,200-acre data center campus, keeping existing PJM and NYISO transmission ties", "source": "Public Power / Utility Dive"}
+ ],
+ "plan": [
+  {"phase": "Pilot (0-18 months)", "milestones": "Screen retired plants and substation land in TX and PJM; acquire 1-2 sites (100-300 MW); sign anchor tenant LOIs"},
+  {"phase": "Scale (18-48 months)", "milestones": "Energize first campus; add BESS and fleet tenants on spare MW; 5-10 sites and 1 GW pipeline; JV with infra fund"},
+  {"phase": "Expand (4-7 years)", "milestones": "Replicate in Brazil and Central America near grid nodes; platform of 2+ GW leased MW and recurring rent"}
+ ],
+ "kpis": [
+  "MW under control and MW energized",
+  "Percent of energized MW leased (target >90%)",
+  "Rent per MW per year and annual escalator",
+  "Months from acquisition to energization vs. utility queue"
+ ],
+ "sources": [
+  "LBNL - Queued Up: 2025 Edition - https://emp.lbl.gov/publications/queued-2025-edition-characteristics",
+  "CBRE - North America Data Center Trends H1 2026 - https://www.cbre.com/insights/books/north-america-data-center-trends-h1-2026",
+  "CBRE press release - Demand outpaces supply despite record construction - https://www.cbre.com/press-releases/north-american-data-center-demand-continues-to-outpace-supply-despite-record-construction",
+  "The Energy Mag - MARA buys Texas site for AI, bitcoin mining in deal worth up to $600M - https://theenergymag.com/news/2026-07-09/mara-texas-bitcoin-ai-power-campus",
+  "Data Center Frontier - Tract's master-planned land and infrastructure approach - https://www.datacenterfrontier.com/site-selection/article/55308975/scaling-up-tracts-master-planned-land-and-infrastructure-approach-to-data-center-development",
+  "Public Power - Companies unveil largest natural gas powered data center campus - https://www.publicpower.org/periodical/article/companies-unveil-largest-natural-gas-powered-data-center-campus-us",
+  "Utility Dive - Homer City gas-fired power station data center - https://www.utilitydive.com/news/homer-city-gas-fired-power-station-data-center-firstenergy/744332/",
+  "Bisnow - Data center sites are warping the market for developable land - https://www.bisnow.com/news/national/data-center-development/data-center-sites-are-warping-the-market-for-developable-land-134771"
+ ]
+}

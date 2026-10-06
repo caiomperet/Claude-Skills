@@ -1,0 +1,52 @@
+{"title_how": "Powered pods at hub towers, leased per kW",
+"flow": [
+ {"step": "Select hub sites", "detail": "Screen aggregation towers for fiber, grid power and land; SBA has pre-qualified 8,000 US towers for edge"},
+ {"step": "Drop prefab pods", "detail": "Factory-built 250-1,000 kW powered shells: space, power, cooling-ready, fiber entry and security"},
+ {"step": "Lease per kW", "detail": "Anchor carrier pools AI-RAN/vRAN baseband; inference, CDN and enterprise tenants fill the rest"},
+ {"step": "Sell interconnection", "detail": "Neutral cross-connects between tenants and fiber; tenants own GPUs, towerco owns the shell"}
+],
+"payers": [
+ {"who": "Mobile carriers", "pays_for": "Per-kW space and power to pool AI-RAN/vRAN baseband near cell clusters"},
+ {"who": "AI inference providers", "pays_for": "Low-latency powered racks for distributed inference ('AI grid' nodes)"},
+ {"who": "CDNs and cloud on-ramps", "pays_for": "Edge cache and peering points closer to users, plus cross-connect fees"},
+ {"who": "Enterprises and public sector", "pays_for": "Local compute for video analytics, robotics and sovereign data workloads"}
+],
+"title_market": "AI-RAN and edge compute pull power to the cell edge",
+"stats": [
+ {"value": ">US$200B", "label": "Cumulative AI-RAN market opportunity expected by 2030", "source": "Omdia (via Nvidia/Nokia)"},
+ {"value": "US$39.8B", "label": "Global edge data center market by 2030, up from US$15.4B in 2024 (17.1% CAGR)", "source": "ResearchAndMarkets"},
+ {"value": "2027", "label": "First commercial Nokia AI-RAN deployments on Nvidia; trials 2026, scale availability 2028", "source": "Fierce Network / Nokia"}
+],
+"unit_economics": {"unit": "One 500 kW hub pod (illustrative)",
+ "rows": [
+  {"item": "Capex: shell, power, cooling, fiber", "value": "~US$5M"},
+  {"item": "Leased load at maturity (80%)", "value": "400 kW"},
+  {"item": "Price per kW-month", "value": "US$200-250"},
+  {"item": "Annual revenue incl. cross-connects", "value": "~US$1.1-1.3M"},
+  {"item": "EBITDA margin / cash yield", "value": "~60% / ~13-15%"}
+ ],
+ "note": "Illustrative: power pass-through excluded; 10-yr anchor lease; tenant owns IT and GPUs; ramp to 80% over 3 years."},
+"title_plan": "Proven by peers; ramp ahead of the 6G cycle",
+"precedents": [
+ {"name": "American Tower edge data centers", "what": "Raleigh RA1 at tower base: 1 MW at launch, up to 4 MW; 1,000+ ATC sites deemed feasible for multi-MW edge", "source": "DCD"},
+ {"name": "SBA Edge (SBA Communications)", "what": "Shelter-style edge sites at towers (e.g., Arlington, TX); 40-50 sites live or in development by 2023", "source": "DCD"},
+ {"name": "Vapor IO + Crown Castle", "what": "Kinetic Edge micro data centers at tower bases, Chicago first; Crown Castle took a minority stake", "source": "Data Center Frontier"}
+],
+"plan": [
+ {"phase": "Y0-1: Pilot hubs", "milestones": "5-10 US hub pods with one carrier AI-RAN anchor plus a CDN or inference tenant; standard pod design and per-kW contract"},
+ {"phase": "Y2-3: Scale US", "milestones": "100+ pods in top metros; 2+ paying tenant types per pod; 5-10 yr leases; interconnection product live"},
+ {"phase": "Y4-6: Expand, 6G-ready", "milestones": "Replicate in Brazil and Central America; MW-class hubs at selected sites aligned to 6G and AI grid rollouts"}
+],
+"kpis": ["Leased kW and utilization per pod", "Tenants per pod (target 2+)", "Cross-connects per site", "Cash yield on pod capex (target 12%+)"],
+"sources": [
+ "Nvidia - Telecom leaders build AI grids (GTC 2026) - https://blogs.nvidia.com/blog/telecom-ai-grids-inference",
+ "Fierce Network - Nokia promises commercial AI-RAN in 2027 - https://www.fierce-network.com/wireless/nokia-promises-commercial-ai-ran-2027",
+ "RCR Wireless - Nvidia positions AI-RAN with Nokia, T-Mobile - https://www.rcrwireless.com/20260317/network-infrastructure/nvidia-ai-ran-nokia-t-mobile",
+ "Fierce Network - T-Mobile and Nvidia push physical AI to the network edge - https://www.fierce-network.com/broadband/nvidia-gtc-t-mobile-and-nvidia-push-physical-ai-network-edge-0",
+ "ABI Research - Nvidia US$1B move on Nokia - https://www.abiresearch.com/market-research/insight/7787084-nvidias-bold-us1-billion-move-on-nokia-giv",
+ "ResearchAndMarkets - Edge Data Centers report 2025-2030 - https://www.businesswire.com/news/home/20251106247014/en",
+ "DCD - American Tower opens edge data center in Raleigh - https://www.datacenterdynamics.com/en/news/american-tower-opens-edge-data-center-in-raleigh-north-carolina/",
+ "DCD - SBA has 30 or 40 edge facilities at tower sites - https://www.datacenterdynamics.com/en/news/sba-communications-has-30-or-40-edge-facilities-at-tower-sites/",
+ "DCD - SBA launches edge data center in Arlington, Texas - https://www.datacenterdynamics.com/en/news/sba-communications-launches-edge-data-center-at-tower-site-in-arlington-texas/",
+ "Data Center Frontier - Vapor IO edge architecture - https://datacenterfrontier.com/a-vision-for-the-edge-vapor-io-refines-network-data-center-designs/"
+]}

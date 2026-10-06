@@ -1,0 +1,56 @@
+{"title_how": "HubCo: buy carrier hubs, lease back, sell the rest",
+"flow": [
+{"step": "Buy technical buildings", "detail": "Acquire oversized central offices, MSCs, landing and C-RAN hubs with power, fiber and city-center permits"},
+{"step": "Lease back what is used", "detail": "Seller signs a 15-year anchor lease for only the space and power its network still needs"},
+{"step": "Retrofit freed capacity", "detail": "Convert empty halls into neutral colocation, meet-me rooms and 0.5-2 MW edge/AI inference pods"},
+{"step": "Sell neutral access", "detail": "Lease racks, power and cross-connects to other carriers, ISPs, CDNs, cloud and AI tenants"}
+],
+"payers": [
+{"who": "Selling carrier (anchor)", "pays_for": "15-year lease on space and power it keeps, with annual escalators"},
+{"who": "Other carriers and ISPs", "pays_for": "Racks, power and cross-connects to reach the anchor's network and each other"},
+{"who": "CDNs and cloud on-ramps", "pays_for": "Edge colocation close to end users, plus interconnection ports"},
+{"who": "AI inference providers", "pays_for": "High-density power and cooling pods for low-latency inference in city centers"}
+],
+"title_market": "Stranded carrier real estate meets edge demand",
+"stats": [
+{"value": "35%", "label": "Share of the 74 central offices sold to Reign Capital that AT&T was actually using", "source": "AT&T / DCD, Jan 2025"},
+{"value": "US$400M+", "label": "Equinix quarterly interconnection revenue (Q2 2025), from 492k+ interconnections", "source": "Equinix Q2 2025"},
+{"value": "17.6%", "label": "Edge data center market CAGR 2025-34: US$20.6B (2024) to US$109.8B (2034)", "source": "ResearchAndMarkets"}
+],
+"unit_economics": {"unit": "One urban hub building (illustrative)",
+"rows": [
+{"item": "Purchase price", "value": "~US$11.5M"},
+{"item": "Anchor lease at 7.5% entry yield", "value": "~US$0.9M/yr"},
+{"item": "1 MW edge colo at US$150/kW-mo", "value": "~US$1.8M/yr"},
+{"item": "200 cross-connects at US$300/mo", "value": "~US$0.7M/yr"},
+{"item": "Stabilized yield on total cost", "value": "~12% vs 7.5% at entry"}
+],
+"note": "Illustrative. Price = AT&T-Reign average (US$850M/74). Fit-out ~US$7M/MW, 65% EBITDA margin. Colo and cross-connect prices are assumptions."},
+"title_plan": "Proven deal type, phased entry from SBA markets",
+"precedents": [
+{"name": "AT&T - Reign Capital (2025)", "what": "74 central offices, 13M sq ft, US$850M+ upfront; AT&T leases back only needed space and shares in redevelopment upside", "source": "AT&T / DCD"},
+{"name": "BT - Telereal (2001)", "what": "~6,700 properties incl. ~6,000 exchanges for GBP 2.38B; 30-year leaseback at ~7.9% initial yield with 3% annual uplift", "source": "GlobeSt"},
+{"name": "Telefonica legacy-to-edge (2026)", "what": "Converting copper central offices into 1-2 MW mini data centers: 10 live, 17 in 2026, target 100+ within 5-7 years", "source": "TeleSemana"}
+],
+"plan": [
+{"phase": "0-12 months: pilot", "milestones": "Bid for 10-20 hubs from one LatAm carrier (e.g., Brazil or Central America) with 15-year leaseback; set up neutral meet-me rooms"},
+{"phase": "12-36 months: fill", "milestones": "Retrofit 1-2 MW per site; sign 3+ non-anchor tenants per hub; bundle with SBA towers and fiber for regional ISPs"},
+{"phase": "36-60 months: scale", "milestones": "Programmatic portfolio deals with 2-3 carriers incl. US copper retirements; JV capital to fund US$1B+ of hubs"}
+],
+"kpis": [
+"Tenants per hub (target 3+ beyond anchor)",
+"Sold MW vs available MW per site",
+"Cross-connects per hub and monthly growth",
+"Stabilized yield on cost vs entry cap rate"
+],
+"sources": [
+"AT&T Announces Structured Sale-Leaseback to Reign Capital - https://about.att.com/story/2025/reign-capital.html",
+"AT&T signs $850m sale-leaseback for 74 copper central offices (DCD) - https://www.datacenterdynamics.com/en/news/att-signs-850m-sale-leaseback-deal-for-74-copper-network-central-offices/",
+"Equinix Reports Second-Quarter 2025 Results - https://newsroom.equinix.com/2025-07-30-Equinix-Reports-Second-Quarter-2025-Results",
+"Edge Data Center Market Analysis and Forecast 2025-2034 (ResearchAndMarkets) - https://www.businesswire.com/news/home/20250328154305/en/",
+"BT sells UK property portfolio (GlobeSt, 2001) - https://www.globest.com/2001/06/14/bt-sells-uk-property-portfolio",
+"Telefonica convierte su legacy en mini data centers (TeleSemana) - https://www.telesemana.com/blog/2026/01/29/telefonica-convierte-su-legacy-en-mini-data-centers-pero-el-reto-esta-en-venderlos-como-cloud/",
+"Five Verizon central offices for sale in Massachusetts (DCD) - https://www.datacenterdynamics.com/en/news/five-verizon-central-offices-for-sale-in-massachusetts/",
+"Openreach closes first legacy UK exchange (ISPreview) - https://www.ispreview.co.uk/index.php/2025/11/openreach-officially-closes-first-legacy-uk-exchange-deddington.html",
+"Vivo: R$ 650 milhoes com cobre e imoveis (Teletime) - https://teletime.com.br/28/07/2026/vivo-650-milhoes/"
+]}

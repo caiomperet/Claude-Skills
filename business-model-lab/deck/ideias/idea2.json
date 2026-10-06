@@ -1,0 +1,135 @@
+{
+ "title_how": "Energy-as-a-Service: backup power as a shared asset",
+ "flow": [
+  {
+   "step": "Buy the backup fleet",
+   "detail": "Sale-leaseback of carriers' site batteries and generators; carrier frees capex, O&M and diesel logistics"
+  },
+  {
+   "step": "Upgrade to lithium",
+   "detail": "Swap lead-acid for LFP packs plus smart controllers; add solar-hybrid at off-grid and weak-grid sites"
+  },
+  {
+   "step": "Sell backup with SLA",
+   "detail": "10-year backup-as-a-service contracts with availability SLA and escalators, on top of the tower lease"
+  },
+  {
+   "step": "Run it as a VPP",
+   "detail": "Aggregate spare battery capacity of thousands of sites and bid it into frequency, capacity and peak markets"
+  }
+ ],
+ "payers": [
+  {
+   "who": "Mobile carriers",
+   "pays_for": "Monthly backup-as-a-service fee per site with guaranteed availability SLA"
+  },
+  {
+   "who": "Grid operators (TSO/ISO)",
+   "pays_for": "Frequency regulation and reserve capacity from aggregated site batteries"
+  },
+  {
+   "who": "Utilities",
+   "pays_for": "Capacity and demand-response payments for peak shaving at site level"
+  },
+  {
+   "who": "Off-grid MNOs (Africa/LatAm)",
+   "pays_for": "Solar-hybrid power per kWh delivered, replacing diesel runs and fuel logistics"
+  }
+ ],
+ "title_market": "A large energy bill and cheaper batteries",
+ "stats": [
+  {
+   "value": "20-40%",
+   "label": "Share of telecom network opex spent on energy, rising with 5G densification",
+   "source": "GSMA"
+  },
+  {
+   "value": "US$70/kWh",
+   "label": "Average stationary storage battery pack price in 2025, down 45% year on year",
+   "source": "BloombergNEF"
+  },
+  {
+   "value": "80-160 GW",
+   "label": "US virtual power plant capacity by 2030 that could cut grid costs ~US$10B per year",
+   "source": "US DOE"
+  }
+ ],
+ "unit_economics": {
+  "unit": "Per macro site, 10-year contract",
+  "rows": [
+   {
+    "item": "Capex: buy-in plus 20 kWh LFP upgrade",
+    "value": "~US$15k per site"
+   },
+   {
+    "item": "Backup-as-a-service fee (carrier)",
+    "value": "~US$2.0k per year"
+   },
+   {
+    "item": "Grid services, net (VPP)",
+    "value": "~US$0.5-1.0k per year"
+   },
+   {
+    "item": "O&M, insurance and VPP platform",
+    "value": "~US$0.6k per year"
+   },
+   {
+    "item": "Unlevered EBITDA yield on capex",
+    "value": "~13-16% (margin ~75-80%)"
+   }
+  ],
+  "note": "Illustrative, not quotes: 20 kWh LFP per site, fee set below carrier's own cost, grid revenue only where markets admit aggregated batteries."
+ },
+ "title_plan": "Proven by telcos; a towerco can scale it",
+ "precedents": [
+  {
+   "name": "Elisa DES (Finland)",
+   "what": "Telco turned base-station batteries into a VPP; first distributed asset pre-qualified by Fingrid for aFRR; 150 MWh rollout planned",
+   "source": "Elisa / Energy Storage News"
+  },
+  {
+   "name": "DNA Tower Finland (Telenor)",
+   "what": "First tower company to sell base-station battery capacity into grid reserve markets, aiming to cover most of its sites",
+   "source": "Elisa Industriq press release"
+  },
+  {
+   "name": "ATC Africa power-as-a-service",
+   "what": "American Tower invested 350M+ USD since 2018 in solar and lithium at African sites, saving ~43.5M liters of diesel a year",
+   "source": "TechAfrica News"
+  }
+ ],
+ "plan": [
+  {
+   "phase": "Months 0-12: Prove",
+   "milestones": "Pilot 500 US and 500 Brazil/Africa sites with one anchor carrier; TSO/ISO pre-qualification; measure SLA uptime and grid revenue"
+  },
+  {
+   "phase": "Months 12-36: Scale",
+   "milestones": "First portfolio sale-leaseback (5-10k sites); 2nd carrier signed; solar-hybrid at off-grid sites; enter 2-3 grid markets"
+  },
+  {
+   "phase": "Months 36-60: Platform",
+   "milestones": "20k+ sites aggregated as one VPP; third-party sites and utilities as clients; infra-fund co-investment vehicle"
+  }
+ ],
+ "kpis": [
+  "Sites under backup-as-a-service contract",
+  "Availability SLA met (target 99.99%)",
+  "Grid revenue per site per year (US$)",
+  "Diesel liters avoided at hybrid sites"
+ ],
+ "sources": [
+  "GSMA - Energy Efficiency: An Overview - https://www.gsma.com/solutions-and-impact/technologies/networks/gsma_resources/energy-efficiency-an-overview/",
+  "GSMA - 5G-era Mobile Network Cost Evolution - https://www.gsma.com/solutions-and-impact/technologies/networks/gsma_resources/5g-era-mobile-network-cost-evolution/",
+  "BloombergNEF - Lithium-ion battery pack prices 2025 - https://about.bnef.com/insights/clean-energy/lithium-ion-battery-pack-prices/",
+  "US DOE - Pathways to Commercial Liftoff: Virtual Power Plants - https://liftoff.energy.gov/wp-content/uploads/2023/10/LIFTOFF_DOE_VVP_10062023_v4.pdf",
+  "Energy Monitor / eeNews - Elisa base stations create virtual power plant in Finland - https://www.eenewseurope.com/en/ai-enabled-basestations-create-virtual-power-plant-in-finland/",
+  "Enlit - Finland invests in 150MWh VPP - https://www.enlit.world/library/finland-invests-in-150mwh-vpp",
+  "Elisa Industriq - DNA Tower becomes world's first tower company to offer battery capacity in reserve markets - https://www.elisaindustriq.com/resources/press-releases/dna-tower-becomes-worlds-first-tower-company-to-offer-battery-capacity-in-electricity-reserve-markets-with-elisa-des",
+  "TechAfrica News - ATC Africa green initiatives: 350M invested, 43.5M liters diesel saved - https://techafricanews.com/2023/10/10/atc-africas-green-initiatives-350m-invested-43-5m-liters-of-diesel-saved-117000-mtco2e-avoided/",
+  "TechCabal - IHS Towers revenue and hybrid power sites - https://techcabal.com/2025/03/19/mtn-airtel-drive-57-of-ihs-towers-revenue/",
+  "AP via WTOP - Africa's cellphone towers turn to solar as diesel costs surge - https://wtop.com/world/2026/05/africas-cellphone-towers-turn-to-solar-as-diesel-costs-surge/",
+  "GSMA Intelligence - Telcos and virtual power plants - https://gsmaintelligence.com/research/telcos-and-virtual-power-plants-green-energy-green-profit",
+  "Emaldo - Finnish ancillary services market review - https://emaldo.com/insights/emaldo-market-review-the-finnish-ancillary-services-market"
+ ]
+}

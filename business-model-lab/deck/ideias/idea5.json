@@ -1,0 +1,131 @@
+{
+ "title_how": "Buy a second pillar: a ready multi-tenant platform",
+ "flow": [
+  {
+   "step": "Screen and select",
+   "detail": "Rank platforms by multi-tenant revenue, contract length, churn, carrier overlap and fit with SBA markets"
+  },
+  {
+   "step": "Price with discipline",
+   "detail": "Underwrite run-rate EBITDA plus organic growth; cap the multiple; fund with a mix that protects rating"
+  },
+  {
+   "step": "Keep the engine running",
+   "detail": "Retain platform management and sales team; ring-fence growth capex; avoid forced integration in year one"
+  },
+  {
+   "step": "Cross-sell and scale",
+   "detail": "Bundle towers + platform for carriers, add sites via SBA land and build skills, tuck in smaller bolt-ons"
+  }
+ ],
+ "payers": [
+  {
+   "who": "Interconnection data centers",
+   "pays_for": "Colocation and cross-connects with network effects; CoreSite proved it inside a tower REIT"
+  },
+  {
+   "who": "LatAm data center platform",
+   "pays_for": "Cloud and AI demand in Brazil, where SBA already operates; ODATA/Scala show buyer appetite"
+  },
+  {
+   "who": "Neutral-host indoor/DAS",
+   "pays_for": "Carriers share coverage in venues, transit, campuses; long contracts, tower-like tenancy"
+  },
+  {
+   "who": "Regional dark fiber/backhaul",
+   "pays_for": "Fiber to towers and edge sites; cuts carrier cost, but needs dense markets for good yields"
+  }
+ ],
+ "title_market": "Platform deals are large, priced high, and can grow",
+ "stats": [
+  {
+   "value": "US$ 10.1B",
+   "label": "Enterprise value AMT paid for CoreSite (closed Dec 2021), incl. assumed/repaid debt",
+   "source": "American Tower / Business Wire"
+  },
+  {
+   "value": "~29x",
+   "label": "Implied EV/EBITDA: US$ 10.1B vs. CoreSite Q3 2021 annualized adj. EBITDA of US$ 343M",
+   "source": "AMT 8-K (Nov 2021), derived"
+  },
+  {
+   "value": "+14%",
+   "label": "CoreSite revenue growth YoY in Q3 2025 (US$ 267M), on retail leasing and AI demand",
+   "source": "Inside Towers / AMT Q3 2025"
+  }
+ ],
+ "unit_economics": {
+  "unit": "Illustrative mid-size platform deal",
+  "rows": [
+   {
+    "item": "Purchase price (EV)",
+    "value": "US$ 1.5B (~19 index pts)"
+   },
+   {
+    "item": "Run-rate EBITDA at entry",
+    "value": "US$ 75M"
+   },
+   {
+    "item": "Entry multiple / EBITDA yield",
+    "value": "20x / 5.0%"
+   },
+   {
+    "item": "Synergies + organic growth (yr 5)",
+    "value": "+US$ 40M EBITDA"
+   },
+   {
+    "item": "Yield on cost by year 5",
+    "value": "~7.7%"
+   }
+  ],
+  "note": "Illustrative only. Assumes ~10% EBITDA CAGR, modest cost/cross-sell synergies, growth capex excluded; real multiples range ~15x-30x."
+ },
+ "title_plan": "Learn from AMT, Crown Castle and LatAm deals",
+ "precedents": [
+  {
+   "name": "American Tower + CoreSite (2021)",
+   "what": "US$ 10.1B for an interconnection data center REIT; kept CoreSite brand and team; data center growth ~13-14% in 2025",
+   "source": "Business Wire; Inside Towers"
+  },
+  {
+   "name": "Crown Castle + Lightower (2017)",
+   "what": "US$ 7.1B for ~32k fiber route miles to feed small cells; returns lagged and fiber/small cells were sold in 2025 for US$ 8.5B",
+   "source": "CNBC; Broadband Breakfast"
+  },
+  {
+   "name": "Aligned + ODATA (2022-23)",
+   "what": "Macquarie-backed Aligned bought ODATA (Brazil, Mexico, Colombia, Chile), reportedly ~US$ 1.8B, to enter LatAm at scale",
+   "source": "DCD; Data Center Frontier"
+  }
+ ],
+ "plan": [
+  {
+   "phase": "0-12 months: thesis",
+   "milestones": "Pick 1-2 platform types, build target list in US/Brazil, set price and leverage guardrails, line up partner capital"
+  },
+  {
+   "phase": "12-24 months: acquire",
+   "milestones": "Sign and close one platform (or JV stake with option to control); keep management; launch 100-day plan"
+  },
+  {
+   "phase": "24-60 months: scale",
+   "milestones": "Cross-sell to carriers and cloud clients, fund bolt-ons and expansions, report the segment separately"
+  }
+ ],
+ "kpis": [
+  "Platform revenue growth vs. underwriting (target >10%)",
+  "Yield on invested capital vs. WACC by year 3-5",
+  "Tenants per asset / cross-connects and churn",
+  "Net leverage and AFFO per share accretion"
+ ],
+ "sources": [
+  "American Tower Completes Acquisition of CoreSite Realty - https://www.businesswire.com/news/home/20211228005115/en/American-Tower-Completes-Acquisition-of-CoreSite-Realty-Corporation",
+  "AMT 8-K: agreement to acquire CoreSite (Nov 2021) - https://www.sec.gov/Archives/edgar/data/1053507/000119312521328894/d245474dex991.htm",
+  "American Tower Raises Full-Year 2025 Outlook on Solid Q3 Results - https://insidetowers.com/american-tower-raises-full-year-2025-outlook-on-solid-q3-results/",
+  "Tower operator Crown Castle to buy Lightower - https://www.cnbc.com/2017/07/19/tower-operator-crown-castle-to-buy-lightower.html",
+  "Crown Castle Selling Fiber, Small Cell Businesses for $8.5 Billion - https://broadbandbreakfast.com/crown-castle-selling-fiber-small-cell-businesses-for-8-5-billion/",
+  "Crown Castle completes $8.5B sale of fiber and small cells - https://www.datacenterdynamics.com/en/news/crown-castle-completes-85bn-sale-of-fiber-and-small-cells-assets/",
+  "Aligned Data Centers acquires Brazil's ODATA - https://datacenterdynamics.com/en/news/aligned-data-centers-acquires-brazils-odata",
+  "Aligned Data Centers Enters Latin America With Acquisition of ODATA - https://www.datacenterfrontier.com/finance/article/21438806/aligned-goes-global-with-acquisition-of-odata"
+ ]
+}
