@@ -1,6 +1,6 @@
 # Laboratório de Modelos de Negócio
 
-Sistema de agentes que gera, critica de forma adversária, filtra por escala e margem, pesquisa contra dados reais e ranqueia novos modelos de negócio para uma torreira global. O objetivo é encontrar o que pode substituir o sharing de torres como motor de crescimento em 5 anos.
+Sistema de agentes que gera ideias, pesquisa, critica de forma adversária, avalia escala e margem com rigor crescente e ranqueia novos modelos de negócio para uma torreira global. O objetivo é encontrar o que pode se tornar, em degraus, o motor de crescimento e depois o principal negócio da empresa (meta no brief, seção 2).
 
 ## 1. Princípios de projeto
 
@@ -17,58 +17,65 @@ Cada princípio vem de um estudo da etapa de pesquisa e é aplicado num mecanism
 | Pre-mortem | Mitchell et al. (1989); Klein (2007) | Agente dedicado antes do portão conceitual |
 | Teoria com hipóteses testáveis | Camuffo et al. (2020); Felin e Zenger (2017) | Toda afirmação vira hipótese com probabilidade e critério de abandono |
 | Evidência real decide | Koning et al. (2022) | Pesquisa na web e verificação adversária antes da recomendação |
-| Escala relativa e margem | Christensen; McKinsey; Zook | Guardião de Escala e Margem permanente, com memória entre rodadas |
+| Escala relativa e margem | Christensen; McKinsey; Zook | Guardião de Escala e Margem permanente, com memória entre rodadas e rigor crescente |
+| Ideias evoluem com a pesquisa | Felin et al. (2020); Christensen (mercados disruptivos começam pequenos) | Pesquisa preliminar antes de qualquer avaliação; o Guardião não elimina nada no início e aponta alavancas de melhoria |
 | Integrador com poder de decidir | O'Reilly e Tushman (2004); Eisenhardt (1989) | O Diretor decide por consenso qualificado; limiares impostos em código |
 
 ## 2. Arquitetura
 
 ```mermaid
 flowchart TD
-    BR[Brief e meta dupla<br/>receita 116 + margem 60-65% + caixa] --> G
+    BR[Brief: escada de degraus<br/>ano 3, 5, 8, 12] --> G
 
-    subgraph G[1. Geração divergente, independente]
-      G1[padrões] & G2[oceano azul] & G3[JTBD] & G4[ativos] & G5[analogias]
+    subgraph G[1. Geração divergente, independente, sem contexto de mercado]
+      G1[padrões] & G2[oceano azul] & G3[JTBD] & G4[ativos] & G5[analogias] & G6[aquisições]
     end
     G --> C[Consolidador]
-    C --> T{2. Guardião: teto<br/>receita e margem}
-    T -- não passa --> ARQ[(Arquivo com motivo)]
-    T -- top N --> D
+    C --> SEL{2. Diretor: seleção tolerante<br/>só exclui violação de restrições}
+    SEL -- excluída --> ARQ[(Arquivo com motivo)]
+    SEL -- top N --> PP
 
-    subgraph D[3. Desenvolvimento por pares: propositor x crítico]
+    subgraph PP[3. Pesquisa preliminar]
+      PR[Pesquisador web: mercado, margens análogas,<br/>demanda, precedentes, ativos cativos] --> GX[Guardião exploratório:<br/>não elimina, aponta alavancas]
+    end
+
+    PP --> D
+    subgraph D[4. Desenvolvimento por pares: propositor x crítico]
       P1[Cliente / JTBD] --> P2[Tecnologia] & P3[Ecossistema] & P4[Regulatório]
       P2 & P3 & P4 --> P5[Estratégia e red team]
       P5 --> P6[Economia e margem]
-      P6 --> GU1[Guardião: checkpoint]
+      P6 --> GU1[Guardião: desenvolvimento]
       GU1 --> P7[Capital e caixa]
       P7 --> P8[Execução e organização]
     end
 
     D --> PM[Pre-mortem]
-    PM --> GU2[Guardião: painel]
-    GU2 --> DIR{4. Diretor:<br/>portão conceitual}
+    PM --> GU2[Guardião: moderado]
+    GU2 --> DIR{5. Diretor:<br/>portão conceitual}
     DIR -- devolver --> D
     DIR -- arquivar --> ARQ
     DIR -- aprovar --> R
 
-    subgraph R[5. Pesquisa contra dados reais]
+    subgraph R[6. Pesquisa profunda]
       H[Hipóteses críticas] --> PQ[Pesquisador web] --> VF[Verificador adversário]
     end
-    R --> GU3[Guardião: painel com evidência]
+    R --> GU3[Guardião: rigoroso]
     GU3 --> DF{Diretor: portão final}
-    DF --> CF[6. Comitê final<br/>ranking + portfólio + relatório]
+    DF --> CF[7. Comitê final<br/>ranking + portfólio + relatório]
 ```
 
 ### 2.1 Papéis
 
 | Papel | Quantidade | Arquivo |
 |---|---|---|
-| Geradores divergentes | 5 lentes | `agents/geradores.md` |
+| Geradores divergentes | 6 lentes (inclui aquisições) | `agents/geradores.md` |
 | Consolidador | 1 | (no workflow) |
 | Pares propositor x crítico | 8 especialidades | `agents/pares/*.md` + protocolos |
-| Guardião de Escala e Margem | Permanente, com memória | `agents/guardiao.md` |
+| Guardião de Escala e Margem | Permanente, com memória e 4 modos de rigor | `agents/guardiao.md` |
 | Pre-mortem | 1 por pacote | `agents/premortem.md` |
 | Diretor (integrador) | Portão conceitual, portão final e comitê | `agents/diretor.md` |
-| Pesquisador e verificador | 1 dupla por hipótese crítica | `agents/pesquisador.md`, `agents/verificador.md` |
+| Pesquisador (preliminar) | 1 por ideia selecionada | `agents/pesquisador.md` |
+| Pesquisador e verificador (profundo) | 1 dupla por hipótese crítica | `agents/pesquisador.md`, `agents/verificador.md` |
 
 ### 2.2 Os 8 pares de especialidade
 
@@ -107,17 +114,21 @@ Cada ideia vira um pacote que cresce ao longo do fluxo:
 
 Os schemas exatos estão no topo de `workflow/laboratorio.workflow.js`.
 
-## 4. Portões e "alta probabilidade de sucesso"
+## 4. Rigor crescente e portões
 
-A rubrica completa está em `config/rubrica.md`.
+O rigor aumenta conforme as evidências aparecem. A rubrica completa está em `config/rubrica.md`.
 
-| Portão | Nota ponderada | Probabilidade da meta dupla | Outras condições |
-|---|---|---|---|
-| Teto (triagem) | Não se aplica | Não se aplica | Teto de receita de 1,5 vez a meta ou mais e teto de margem de 65% ou mais |
-| Conceitual | 3,5 ou mais | 0,35 ou mais | Nenhuma objeção fatal aberta; Guardião "avança" |
-| Final | 3,8 ou mais | 0,45 ou mais | Nenhuma hipótese crítica refutada; Guardião "avança" com evidência |
+| Momento | Quem avalia | O que pode eliminar uma ideia |
+|---|---|---|
+| Seleção | Diretor | Só a violação das restrições do brief |
+| Depois da pesquisa preliminar | Guardião, modo exploratório | Nada: o Guardião aponta alavancas de escala e margem |
+| Checkpoint depois da economia | Guardião, modo desenvolvimento | Nada: registra as alavancas incorporadas |
+| Portão conceitual | Guardião (moderado) e Diretor | Nota abaixo de 3,3, probabilidade abaixo de 0,30, objeção fatal aberta ou parecer "complementar" |
+| Portão final | Guardião (rigoroso) e Diretor | Nota abaixo de 3,7, probabilidade abaixo de 0,40, hipótese crítica refutada ou parecer diferente de "avança" |
 
-Os limiares equivalem a pedir de 1,5 a 2 vezes a taxa base histórica de expansões adjacentes (20% a 25%). **Os limiares são impostos em código:** se o Diretor aprovar um pacote que não cumpre algum deles, a aprovação é convertida em devolução para os pares com objeções graves, ou em reprovação no portão final. Isso protege contra um Diretor complacente.
+A probabilidade se refere ao **degrau do ano 5** (receita de 18 ou mais e margem de 45% ou mais), com caminho crível para os degraus seguintes.
+
+**Os limiares são impostos em código:** se o Diretor aprovar um pacote que não cumpre algum deles, a aprovação é convertida em devolução para os pares com objeções graves, ou em reprovação no portão final.
 
 ## 5. Como executar
 
@@ -132,23 +143,24 @@ Workflow({ scriptPath: "business-model-lab/workflow/laboratorio.workflow.js",
 
 | Argumento | Padrão | O que controla |
 |---|---|---|
-| `ideias_por_gerador` | 4 | Quantas ideias cada uma das 5 lentes gera |
-| `max_finalistas` | 4 | Quantas ideias seguem para o desenvolvimento completo |
+| `ideias_por_gerador` | 4 | Quantas ideias cada uma das 6 lentes gera |
+| `max_finalistas` | 4 | Quantas ideias o Diretor seleciona para pesquisa preliminar e desenvolvimento |
 | `rodadas_por_par` | 2 | Rodadas de crítica em cada par |
 | `max_retornos` | 1 | Quantas vezes o Diretor pode devolver um pacote |
 | `max_hipoteses_pesquisa` | 5 | Hipóteses críticas pesquisadas por pacote |
-| `limiar_conceitual` | `{nota: 3.5, prob: 0.35}` | Limiares do portão conceitual |
-| `limiar_final` | `{nota: 3.8, prob: 0.45}` | Limiares do portão final |
+| `limiar_conceitual` | `{nota: 3.3, prob: 0.30}` | Limiares do portão conceitual |
+| `limiar_final` | `{nota: 3.7, prob: 0.40}` | Limiares do portão final |
 | `foco` | (vazio) | Direcionamento adicional do usuário |
 | `base` | caminho absoluto desta pasta | Onde os agentes encontram o brief e os papéis |
 
-**Custo aproximado com os padrões:** de 200 a 270 chamadas de agente. Os principais fatores são o número de finalistas e as devoluções. Com `max_finalistas: 2` e `rodadas_por_par: 1`, cai para cerca de 70 a 90.
+**Custo aproximado com os padrões:** de 210 a 280 chamadas de agente. Os principais fatores são o número de finalistas e as devoluções. Com `max_finalistas: 2` e `rodadas_por_par: 1`, cai para cerca de 70 a 90.
 
 **Saída:** ranking, visão de portfólio, relatório em Markdown, ideias arquivadas com o motivo e os pacotes completos. Salve o relatório em `saidas/`.
 
 ## 6. Como evoluir o sistema
 
 - **Mudar a meta ou a empresa:** edite `config/brief.md`. É a única fonte de verdade.
+- **Atualizar o contexto de mercado:** edite `config/contexto-mercado.md`. Os geradores não leem este arquivo, para não se ancorarem nos mesmos temas.
 - **Mudar critérios ou pesos:** edite `config/rubrica.md` e o objeto `PESOS` no workflow.
 - **Adicionar uma especialidade:** crie `agents/pares/<chave>.md` com as seções Propositor e Crítico, e inclua a chave em `PARES` e `ETAPAS`.
 - **Calibração:** depois de algumas execuções, compare as probabilidades do Diretor com o que se confirmar nos experimentos reais e ajuste os limiares.
