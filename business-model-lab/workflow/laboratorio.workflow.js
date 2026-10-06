@@ -24,6 +24,8 @@ const CFG = Object.assign({
   limiar_conceitual: { nota: 3.3, prob: 0.30 },
   limiar_final: { nota: 3.7, prob: 0.40 },
   foco: '',
+  redesenho: true,
+  candidatas: null,
 }, args || {})
 const B = CFG.base
 
@@ -129,6 +131,13 @@ const FINAL = S({
   experimentos: { type: 'array', items: S({ experimento: str, pergunta: str, criterio_sucesso: str, custo_prazo: str }) },
   criterios_de_abandono: strs, fontes_chave: strs,
 })
+const REDESENHO = S({
+  titulo: str, tese: str, cliente_pagador: str, job_to_be_done: str, ativos_alavancados: str, mecanismo_receita: str, mecanismo_margem: str,
+  mudancas: strs, fundida_com: strs, alavancas_incorporadas: strs,
+  objecoes_enderecadas: { type: 'array', items: S({ id: str, como: str }) },
+  objecoes_sem_solucao: strs, riscos_novos: strs,
+  pares_afetados: { type: 'array', items: { type: 'string', enum: Object.keys(PARES) } },
+})
 const RANKING = S({
   ranking: { type: 'array', items: S({ posicao: num, id: str, titulo: str, decisao: str, nota_ponderada: num, prob_sucesso: num, embasamento: str }) },
   visao_portfolio: str,
@@ -212,22 +221,23 @@ function aprovadoConceito(g, painel, p) {
 
 // ---------------------------------------------------------------- 1. geração
 phase('Geração')
-const geradas = await parallel(LENTES.map(l => () => agent(`${CAB_GER}
+const geradas = CFG.candidatas ? [] : await parallel(LENTES.map(l => () => agent(`${CAB_GER}
 Seu papel: GERADOR DIVERGENTE com a lente "${l}". Leia ${B}/agents/geradores.md (regras comuns e a seção da lente ${l}).
 Trabalhe de forma independente. Gere ${CFG.ideias_por_gerador} ideias de modelo de negócio.`,
   { label: `gerador:${l}`, phase: 'Geração', schema: IDEIAS })))
-const brutas = geradas.flatMap((g, i) => g ? g.ideias.map(x => ({ ...x, lente: LENTES[i] })) : [])
+const brutas = CFG.candidatas ? CFG.candidatas.map(x => typeof x === 'string' ? { descricao: x, lente: 'usuario' } : { ...x, lente: 'usuario' }) : geradas.flatMap((g, i) => g ? g.ideias.map(x => ({ ...x, lente: LENTES[i] })) : [])
 log(`${brutas.length} ideias brutas geradas por ${geradas.filter(Boolean).length} lentes.`)
 
 // ---------------------------------------------------------------- 2. seleção tolerante
 phase('Seleção')
 const cons = await agent(`${CAB}
-Consolide as ideias abaixo, vindas de geradores independentes. Junte as duplicadas ou muito parecidas (mantendo a melhor formulação e registrando as lentes de origem), preserve as distintas e dê a cada uma um id curto (I01, I02...). Não descarte nenhuma ideia distinta e não avalie mérito.
+Consolide as ideias abaixo. Se alguma vier só como descrição curta, complete os campos (tese, pagador, ativos, mecanismos de receita e margem) sem mudar a essência. Junte as duplicadas ou muito parecidas (mantendo a melhor formulação e registrando as lentes de origem), preserve as distintas e dê a cada uma um id curto (I01, I02...). Não descarte nenhuma ideia distinta e não avalie mérito.
 ${JSON.stringify(brutas)}`, { label: 'consolidador', phase: 'Seleção', schema: CONSOLIDADO })
 const candidatas = cons ? cons.ideias : []
 const sel = await agent(`${CAB}
 Seu papel: DIRETOR, na seleção inicial. Leia ${B}/agents/diretor.md (seção Na seleção inicial).
-Selecione até ${CFG.max_finalistas} candidatas para a pesquisa preliminar. Postura tolerante: exclua só o que viola as restrições do brief; priorize potencial de subir os degraus e diversidade de temas.
+Selecione até ${CFG.max_finalistas} candidatas para a pesquisa preliminar. Postura tolerante: exclua só o que viola as restrições do brief.
+Critérios de prioridade, nesta ordem: (1) potencial de subir os degraus; (2) proximidade do core, isto é, cliente atual e ativo ou competência atual (brief, seção 6: modelos com cliente novo e ativo novo ao mesmo tempo ganham penalidade); (3) presença de uma rota de aquisição de ativos cativos; (4) diversidade de temas. Considere fundir candidatas que compartilham cliente, ativo ou rota de aquisição.
 Candidatas: ${JSON.stringify(candidatas)}`, { label: 'diretor:seleção', phase: 'Seleção', schema: SELECAO })
 const finalistas = sel ? sel.selecionadas.slice(0, CFG.max_finalistas) : []
 const arquivadas = sel ? sel.excluidas.map(x => ({ ...x, etapa: 'seleção' })) : []
@@ -257,6 +267,30 @@ Responda, com fontes, a estas perguntas:
     for (const etapa of ETAPAS) {
       await parallel(etapa.map(k => () => par(k, p)))
       if (etapa[0] === 'economia') await guardiao(p, 'desenvolvimento')
+    }
+    // Redesenho (pivô): reconstrói o modelo a partir das objeções e alavancas, e os pares afetados reavaliam
+    const ult = p.paineis[p.paineis.length - 1]
+    const graves = p.objecoes_abertas.filter(o => o.severidade === 'fatal' || o.severidade === 'alta')
+    if (CFG.redesenho && (!ult || ult.parecer !== 'avanca' || graves.length)) {
+      const r = await agent(`${CAB}
+Seu papel: ARQUITETO DE REDESENHO. Leia ${B}/agents/arquiteto.md.
+Pacote atual: ${enxuto(p)}
+Outras ideias candidatas desta rodada (para possível fusão): ${JSON.stringify(candidatas.filter(c => c.id !== ideia.id).map(c => ({ id: c.id, titulo: c.titulo, tese: c.tese })))}`,
+        { label: `${ideia.id}:redesenho`, phase: 'Desenvolvimento', schema: REDESENHO })
+      if (r) {
+        p.versoes = (p.versoes || []).concat([p.ideia])
+        const { mudancas, fundida_com, objecoes_enderecadas, objecoes_sem_solucao, riscos_novos, pares_afetados, alavancas_incorporadas, ...nova } = r
+        p.ideia = { id: ideia.id, ...nova, versao: p.versoes.length + 1, mudancas, fundida_com, riscos_novos }
+        p.redesenho = { objecoes_enderecadas, objecoes_sem_solucao, alavancas_incorporadas }
+        const afetados = new Set([...(pares_afetados || []), 'economia', 'capital'])
+        const instr = `O modelo foi redesenhado (versão ${p.ideia.versao}). Mudanças: ${JSON.stringify(mudancas)}. Objeções que o redesenho diz resolver: ${JSON.stringify(objecoes_enderecadas)}. Reavalie seu módulo à luz da nova versão, verificando se as objeções foram de fato resolvidas.`
+        log(`${ideia.id}: redesenhado (v${p.ideia.versao}); reavaliam ${[...afetados].join(', ')}.`)
+        for (const etapa of ETAPAS) {
+          const alvo = etapa.filter(k => afetados.has(k))
+          if (alvo.length) await parallel(alvo.map(k => () => par(k, p, instr)))
+        }
+        await guardiao(p, 'desenvolvimento')
+      }
     }
     let aprovado = false
     for (let t = 0; t <= CFG.max_retornos; t++) {

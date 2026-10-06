@@ -49,7 +49,9 @@ flowchart TD
       P7 --> P8[Execução e organização]
     end
 
-    D --> PM[Pre-mortem]
+    D --> AR[Arquiteto de redesenho:<br/>pivô com objeções e alavancas]
+    AR --> RV[Pares afetados reavaliam<br/>+ Guardião]
+    RV --> PM[Pre-mortem]
     PM --> GU2[Guardião: moderado]
     GU2 --> DIR{5. Diretor:<br/>portão conceitual}
     DIR -- devolver --> D
@@ -72,6 +74,7 @@ flowchart TD
 | Consolidador | 1 | (no workflow) |
 | Pares propositor x crítico | 8 especialidades | `agents/pares/*.md` + protocolos |
 | Guardião de Escala e Margem | Permanente, com memória e 4 modos de rigor | `agents/guardiao.md` |
+| Arquiteto de redesenho | 1 por pacote, depois dos pares | `agents/arquiteto.md` |
 | Pre-mortem | 1 por pacote | `agents/premortem.md` |
 | Diretor (integrador) | Portão conceitual, portão final e comitê | `agents/diretor.md` |
 | Pesquisador (preliminar) | 1 por ideia selecionada | `agents/pesquisador.md` |
@@ -151,9 +154,11 @@ Workflow({ scriptPath: "business-model-lab/workflow/laboratorio.workflow.js",
 | `limiar_conceitual` | `{nota: 3.3, prob: 0.30}` | Limiares do portão conceitual |
 | `limiar_final` | `{nota: 3.7, prob: 0.40}` | Limiares do portão final |
 | `foco` | (vazio) | Direcionamento adicional do usuário |
+| `redesenho` | `true` | Liga o passo de pivô depois dos pares |
+| `candidatas` | (vazio) | Lista de ideias (texto ou objetos) para avaliar sem passar pela geração |
 | `base` | caminho absoluto desta pasta | Onde os agentes encontram o brief e os papéis |
 
-**Custo aproximado com os padrões:** de 210 a 280 chamadas de agente. Os principais fatores são o número de finalistas e as devoluções. Com `max_finalistas: 2` e `rodadas_por_par: 1`, cai para cerca de 70 a 90.
+**Custo aproximado com os padrões:** de 240 a 320 chamadas de agente. Num teste com 2 finalistas e 1 rodada por par, o sistema usou 53 agentes, cerca de 7,5 milhões de tokens e cerca de 65 minutos, porque os pares fazem pesquisa própria. Use pelo menos 2 rodadas por par: com 1 rodada o propositor nunca responde às objeções. Os principais fatores são o número de finalistas e as devoluções. Com `max_finalistas: 2` e `rodadas_por_par: 1`, cai para cerca de 70 a 90.
 
 **Saída:** ranking, visão de portfólio, relatório em Markdown, ideias arquivadas com o motivo e os pacotes completos. Salve o relatório em `saidas/`.
 
